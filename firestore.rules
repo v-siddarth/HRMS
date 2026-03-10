@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && request.auth.token.role == 'super_admin';
+    }
+
+    function isShopManager(shopId) {
+      return signedIn() && request.auth.token.role == 'shop_manager' && request.auth.token.shopId == shopId;
+    }
+
+    match /admins/{uid} {
+      allow read, write: if isAdmin();
+    }
+
+    match /shops/{shopId} {
+      allow read, write: if isAdmin() || isShopManager(shopId);
+
+      match /managers/{uid} {
+        allow read, write: if isAdmin() || isShopManager(shopId);
+      }
+
+      match /employees/{employeeId} {
+        allow read, write: if isAdmin() || isShopManager(shopId);
+      }
+
+      match /attendance/{attendanceId} {
+        allow read, write: if isAdmin() || isShopManager(shopId);
+      }
+
+      match /salary/{salaryId} {
+        allow read, write: if isAdmin() || isShopManager(shopId);
+      }
+
+      match /settings/{settingId} {
+        allow read, write: if isAdmin() || isShopManager(shopId);
+      }
+    }
+  }
+}
