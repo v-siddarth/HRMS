@@ -52,12 +52,17 @@ export function LoginScreen() {
       <View style={styles.centerWrap}>
         <View style={styles.card}>
           <View style={styles.headerWrap}>
-            <Text style={styles.title}>Welcome Back</Text>
-            <Text style={styles.subtitle}>Sign in to continue to your HRMS workspace.</Text>
+            <Text style={styles.welcome}>WELCOME TO</Text>
+            <Text style={styles.appHeadline}>SMART BIOMETRIC ATTENDANCE</Text>
+            <Text style={styles.appName}>RVM Attend</Text>
+            <Text style={styles.subtitle}>Admin Log In</Text>
           </View>
           <Field label="Email / Username" placeholder="Enter your email or username" value={email} onChangeText={setEmail} />
           <Field label="Password" placeholder="Enter your password" value={password} onChangeText={setPassword} secureTextEntry />
           <PrimaryButton title="Sign In" onPress={onLogin} loading={loading} />
+          <View style={styles.poweredWrap}>
+            <Text style={styles.poweredText}>Powered by RVM Attend</Text>
+          </View>
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -95,14 +100,43 @@ const styles = StyleSheet.create({
     gap: 6,
     marginBottom: 6,
   },
-  title: {
-    fontSize: 30,
+  welcome: {
+    fontSize: 14,
+    letterSpacing: 1.2,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  appHeadline: {
+    fontSize: 33,
     fontWeight: '800',
     color: colors.textPrimary,
+    lineHeight: 38,
+  },
+  appName: {
+    marginTop: 2,
+    color: colors.success,
+    fontWeight: '800',
+    fontSize: 22,
   },
   subtitle: {
+    marginTop: 6,
     color: colors.textSecondary,
     lineHeight: 20,
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  poweredWrap: {
+    marginTop: 8,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#e8edf4',
+  },
+  poweredText: {
+    textAlign: 'center',
+    color: colors.textMuted,
+    fontWeight: '700',
+    fontSize: 12,
+    letterSpacing: 0.4,
   },
   bgBlobTop: {
     position: 'absolute',

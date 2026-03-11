@@ -23,6 +23,12 @@ export const isHardcodedAdminCredentials = (email: string, password: string) => 
 };
 
 export const setLocalAdminSession = async () => {
+  const credential = await auth().signInWithEmailAndPassword(HARDCODED_ADMIN.email, HARDCODED_ADMIN.password);
+  const tokenResult = await credential.user.getIdTokenResult(true);
+  const role = String(tokenResult.claims.role ?? '');
+  if (role !== 'super_admin') {
+    throw new Error('Admin account missing super_admin claim. Configure Firebase custom claims.');
+  }
   await AsyncStorage.setItem(LOCAL_ADMIN_SESSION_KEY, '1');
   await AsyncStorage.removeItem(LOCAL_SHOP_SESSION_KEY);
   return getLocalAdminUser();
@@ -52,7 +58,7 @@ export const getLocalShopSession = async (): Promise<AuthUser | null> => {
     if (parsed?.role === 'shop_manager' && parsed?.shopId) {
       return parsed;
     }
-  } catch (error) {
+  } catch {
     // Ignore malformed old cache.
   }
 
@@ -63,9 +69,9 @@ export const clearLocalSessions = async () => {
   await AsyncStorage.multiRemove([LOCAL_ADMIN_SESSION_KEY, LOCAL_SHOP_SESSION_KEY]);
 };
 
-const toShopUser = (shop: Shop): AuthUser => ({
-  uid: `shop-${shop.id}`,
-  email: shop.email || shop.username,
+const toShopUser = (shop: Shop, uid: string): AuthUser => ({
+  uid,
+  email: shop.email,
   role: 'shop_manager',
   shopId: shop.id,
   displayName: shop.ownerName,
@@ -75,42 +81,48 @@ export const loginShopWithCredentials = async (
   identifier: string,
   password: string,
 ): Promise<AuthUser | null> => {
-  const id = identifier.trim();
-  if (!id || !password) {
+  const email = identifier.trim().toLowerCase();
+  if (!email || !password) {
     return null;
   }
 
-  const normalized = normalize(id);
+  try {
+    const credential = await auth().signInWithEmailAndPassword(email, password);
+    const tokenResult = await credential.user.getIdTokenResult(true);
+    const role = String(tokenResult.claims.role ?? '');
+    const tokenShopId = String(tokenResult.claims.shopId ?? '');
 
-  const usernameSnap = await shopsCol().where('username', '==', id).limit(1).get();
-  const emailSnap = await shopsCol().where('email', '==', id).limit(1).get();
-
-  const docsMap = new Map<string, any>();
-  usernameSnap.docs.forEach(doc => docsMap.set(doc.id, doc));
-  emailSnap.docs.forEach(doc => docsMap.set(doc.id, doc));
-
-  // Also support case-insensitive identifier check by scanning a small fallback set
-  // for same normalized email/username when exact query misses due to casing.
-  if (docsMap.size === 0) {
-    const scanSnap = await shopsCol().limit(50).get();
-    scanSnap.docs.forEach(doc => {
-      const data = doc.data() as Shop;
-      if (normalize(data.username ?? '') === normalized || normalize(data.email ?? '') === normalized) {
-        docsMap.set(doc.id, doc);
-      }
-    });
-  }
-
-  for (const doc of docsMap.values()) {
-    const shop = { id: doc.id, ...(doc.data() as Omit<Shop, 'id'>) } as Shop;
-    if (shop.password === password && shop.status === 'active') {
-      const user = toShopUser(shop);
-      await setLocalShopSession(user);
-      return user;
+    if (role !== 'shop_manager' || !tokenShopId) {
+      throw new Error('Access claims missing for this shop user. Contact admin to configure Firebase claims.');
     }
-  }
 
-  return null;
+    const shopSnap = await shopsCol().doc(tokenShopId).get();
+    if (!shopSnap.exists()) {
+      throw new Error('Shop profile not found for this account.');
+    }
+    const shop = { id: shopSnap.id, ...(shopSnap.data() as Omit<Shop, 'id'>) } as Shop;
+    if (shop.status !== 'active') {
+      throw new Error('Shop is inactive. Contact admin.');
+    }
+    if (normalize(shop.email ?? '') !== email) {
+      throw new Error('This account email does not match assigned shop.');
+    }
+
+    const user = toShopUser(shop, credential.user.uid);
+    await setLocalShopSession(user);
+    return user;
+  } catch (error) {
+    const message = String((error as { message?: string }).message ?? '').toLowerCase();
+    if (
+      message.includes('auth/user-not-found') ||
+      message.includes('auth/wrong-password') ||
+      message.includes('auth/invalid-credential') ||
+      message.includes('auth/invalid-email')
+    ) {
+      return null;
+    }
+    throw error;
+  }
 };
 
 export const logout = async () => {
@@ -122,17 +134,45 @@ export const logout = async () => {
 
 export const getHydratedAuthUser = async (): Promise<AuthUser | null> => {
   const current = auth().currentUser;
-  if (!current || !current.email) {
+  if (!current || current.isAnonymous) {
     return null;
   }
 
-  // Firebase auth path is kept as fallback only.
-  return {
-    uid: current.uid,
-    email: current.email,
-    role: 'shop_manager',
-    displayName: current.displayName ?? undefined,
-  };
+  const tokenResult = await current.getIdTokenResult(true);
+  const role = String(tokenResult.claims.role ?? '');
+
+  if (role === 'super_admin') {
+    return {
+      uid: current.uid,
+      email: current.email ?? HARDCODED_ADMIN.email,
+      role: 'super_admin',
+      displayName: current.displayName ?? 'Super Admin',
+    };
+  }
+
+  if (role === 'shop_manager') {
+    const shopId = String(tokenResult.claims.shopId ?? '');
+    if (!shopId) {
+      return null;
+    }
+    const shopSnap = await shopsCol().doc(shopId).get();
+    if (!shopSnap.exists()) {
+      return null;
+    }
+    const shop = { id: shopSnap.id, ...(shopSnap.data() as Omit<Shop, 'id'>) } as Shop;
+    if (shop.status !== 'active') {
+      return null;
+    }
+    return {
+      uid: current.uid,
+      email: current.email ?? shop.email,
+      role: 'shop_manager',
+      shopId,
+      displayName: shop.ownerName || current.displayName || undefined,
+    };
+  }
+
+  return null;
 };
 
 export const subscribeAuthState = (

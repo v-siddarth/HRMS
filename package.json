@@ -7,7 +7,8 @@
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
-    "test": "jest"
+    "test": "jest",
+    "auth:sync-shop-claims": "node scripts/sync-shop-manager-auth.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",

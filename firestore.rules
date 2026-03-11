@@ -36,6 +36,18 @@ service cloud.firestore {
         allow read, write: if isAdmin() || isShopManager(shopId);
       }
 
+      match /advances/{advanceId} {
+        allow read, write: if isAdmin() || isShopManager(shopId);
+      }
+
+      match /shifts/{shiftId} {
+        allow read, write: if isAdmin() || isShopManager(shopId);
+      }
+
+      match /weekly_shift_plans/{planId} {
+        allow read, write: if isAdmin() || isShopManager(shopId);
+      }
+
       match /settings/{settingId} {
         allow read, write: if isAdmin() || isShopManager(shopId);
       }

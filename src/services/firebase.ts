@@ -12,5 +12,8 @@ export const managersCol = (shopId: string) => shopDoc(shopId).collection('manag
 export const employeesCol = (shopId: string) => shopDoc(shopId).collection('employees');
 export const attendanceCol = (shopId: string) => shopDoc(shopId).collection('attendance');
 export const salaryCol = (shopId: string) => shopDoc(shopId).collection('salary');
+export const advancesCol = (shopId: string) => shopDoc(shopId).collection('advances');
+export const shiftsCol = (shopId: string) => shopDoc(shopId).collection('shifts');
+export const weeklyShiftPlansCol = (shopId: string) => shopDoc(shopId).collection('weekly_shift_plans');
 export const payrollSettingsDoc = (shopId: string) => shopDoc(shopId).collection('settings').doc('payroll');
 export const biometricSettingsDoc = (shopId: string) => shopDoc(shopId).collection('settings').doc('biometric');

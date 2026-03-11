@@ -157,3 +157,44 @@ That keeps it secure, reliable, and scalable.
 - After 2-4 weeks, expand to all shops.
 
 If you want, next I can draft the exact technical blueprint for your stack (Firebase + your current RTK Query backend style), including new Firestore schema and sync service endpoints.
+
+
+
+
+now i wanna make some changes in the shop login i wanna some big chagnes in the like feilds altration and the UI related changes we wannt to do this production level and error less bug free production redy code and eficient solution anylize the proper changes and then do the proper and dont do any mistake and give me robust solution 
+home screen 
+1 shop name address and owner name needed in the top bar like a header make it proper UI like professional UI 
+2 make salary graph bar graph and make it month wise salary for graph 
+3 the application name is RVM Attend so give this name like powerd by RVM attend in the application 
+
+new staff creatation 
+1 keep seprate line for taluka and district in address 
+2 add addhar no in creation
+3 also add PF below to the basic salary
+4 also keep one optional feild Organisition below to address
+5 genrate a unique no for each staff sequence
+6 give the option there to add biomatric user id proper working 
+7 both date shuld be capture active and inactive automatioclly after inactive this staff the unique no is block 
+8 if you genrate the staff report the system shuld show list of staff readable mannar in a single line for single staff in report format
+9 total job duration shuld show form active to till now
+
+attendace
+1 give the option for the biomatric attendace there and we are using external device for that for now the extenal device connetcivity remain empty we will look after this chagnes 
+2 attendace data should be shown in report when seclect the duration in filter (for the referance i will share my HRMS report i wanna this kind of report)
+
+salary
+1 Generate salary is good 
+2.⁠ ⁠⁠it will work once in a month only.
+3 after generation of report it should show as total staff no’s, paid staff no’s and Pending staff No’s, and also amount
+4.⁠ ⁠⁠advance/Loan salary payment entry
+5.⁠ ⁠⁠this advance should deduct from salary while generate at the end of month
+6.⁠ ⁠⁠Report - Monthly attendance report should be shown while 2 dates are being selected 
+
+Missing in app.
+1.⁠ ⁠Shift creation
+2.⁠ ⁠⁠shift plan loading for week for worker (every week will change)
+3.⁠ ⁠If staff is not on duty then how owner will mark whether staff is on leave to absent?
+
+we wanna all reports in App like a tabale view and if its to long use scrolling for that and also we wanna export report option and its download the report directly in PDF format but like a EXECEL and also we wanna table view like a excel 
+
+now i give you some referace screenshot for the UI anylize it properly and impliment it into the applicion but keep in mind its only the refrace so make UI very proper and enhanced and very butifull and professional in the world think like a proper senior professional UI designer and senior professinoal Application developer and also i add some instructions related to the refrance UI also anylize that and do this changes in the shop user properly after that i will cheak it and also do this changes one by one make proper stratergy for that after one compliction i cheak and then we will go for the next make this solution powerfull robust and eficient with peroduction level and ready code do this with no mistake and eror free bug free output take your proper time and do that if you need to do any terminal task tell me i will do that and avoid the unwanted testing and make it powerfull

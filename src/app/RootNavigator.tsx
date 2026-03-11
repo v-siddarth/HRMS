@@ -1,8 +1,9 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createDrawerNavigator } from '@react-navigation/drawer';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppSelector } from '../store/hooks';
 import type { AuthStackParamList, ShopDrawerParamList } from '../types/navigation';
 import { LoginScreen } from '../features/auth/LoginScreen';
@@ -56,7 +57,13 @@ function ShopManagerNavigator() {
           </Pressable>
         ),
       })}>
-      <ShopDrawer.Screen name="ShopHome" component={ShopHomeTabs} options={{ title: 'Shop' }} />
+      <ShopDrawer.Screen
+        name="ShopHome"
+        component={ShopHomeTabs}
+        options={{
+          headerShown: false,
+        }}
+      />
       <ShopDrawer.Screen name="ShopProfile" component={ProfileScreen} options={{ title: 'Shop Profile' }} />
       <ShopDrawer.Screen name="ShopSettings" component={ShopSettingsScreen} options={{ title: 'Settings' }} />
       <ShopDrawer.Screen name="ShopSupport" component={ShopSupportScreen} options={{ title: 'Support' }} />
@@ -96,16 +103,23 @@ export function RootNavigator() {
   }
 
   return (
-    <NavigationContainer>
-      {!user && <AuthNavigator />}
-      {user?.role === 'super_admin' && <SuperAdminNavigator />}
-      {user?.role === 'shop_manager' && (user.shopId ? <ShopManagerNavigator /> : <ShopAccessMissingScreen />)}
-      {user && user.role !== 'super_admin' && user.role !== 'shop_manager' && <RoleFallbackScreen />}
-    </NavigationContainer>
+    <SafeAreaView style={styles.safeRoot} edges={['top']}>
+      <StatusBar translucent={false} />
+      <NavigationContainer>
+        {!user && <AuthNavigator />}
+        {user?.role === 'super_admin' && <SuperAdminNavigator />}
+        {user?.role === 'shop_manager' && (user.shopId ? <ShopManagerNavigator /> : <ShopAccessMissingScreen />)}
+        {user && user.role !== 'super_admin' && user.role !== 'shop_manager' && <RoleFallbackScreen />}
+      </NavigationContainer>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeRoot: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
   loaderWrap: {
     flex: 1,
     alignItems: 'center',

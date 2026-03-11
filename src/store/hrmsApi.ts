@@ -5,20 +5,27 @@ import type {
   AttendanceSource,
   AttendanceStatus,
   BiometricSettings,
+  EmployeeAdvance,
   Employee,
   PayrollSettings,
   SalaryMonthly,
+  ShiftMaster,
   Shop,
+  WeeklyShiftPlan,
 } from '../types/models';
 import {
   attendanceCol,
+  advancesCol,
   biometricSettingsDoc,
   employeesCol,
+  firestore,
   nowIso,
   payrollSettingsDoc,
   salaryCol,
   shopDoc,
   shopsCol,
+  shiftsCol,
+  weeklyShiftPlansCol,
 } from '../services/firebase';
 import { calculateSalary } from '../utils/salary';
 import { currentMonth, monthDateRange, todayDate } from '../utils/date';
@@ -28,7 +35,7 @@ interface FirestoreError {
 }
 
 type ShopInput = Omit<Shop, 'id' | 'createdAt' | 'updatedAt'> & { id?: string };
-type EmployeeInput = Omit<Employee, 'id' | 'createdAt' | 'updatedAt'> & { id?: string };
+type EmployeeInput = Omit<Employee, 'id' | 'createdAt' | 'updatedAt'> & { id?: string; createdAt?: string };
 
 interface BulkAttendancePayload {
   shopId: string;
@@ -42,6 +49,8 @@ interface BulkAttendancePayload {
     rawLogId?: string;
     biometricDeviceId?: string;
     syncedAt?: string;
+    checkInTime?: string;
+    checkOutTime?: string;
   }[];
   createdBy: string;
 }
@@ -52,6 +61,27 @@ interface SalaryGeneratePayload {
   overtimeHoursByEmployeeId?: Record<string, number>;
 }
 
+interface AdvanceEntryPayload {
+  shopId: string;
+  employeeId: string;
+  month: string;
+  amount: number;
+  type: 'advance' | 'loan';
+  notes?: string;
+  paidAt: string;
+  createdBy: string;
+}
+
+interface ShiftInput extends Omit<ShiftMaster, 'id' | 'createdAt' | 'updatedAt'> {
+  id?: string;
+  createdAt?: string;
+}
+
+interface WeeklyShiftPlanInput extends Omit<WeeklyShiftPlan, 'id' | 'createdAt' | 'updatedAt'> {
+  id?: string;
+  createdAt?: string;
+}
+
 interface ReportFilter {
   shopId: string;
   fromDate: string;
@@ -60,8 +90,11 @@ interface ReportFilter {
 
 interface ShopDashboard {
   totalStaff: number;
-  todayAttendance: number;
+  presentStaff: number;
+  punchErrors: number;
   todayDate: string;
+  currentMonthProjectedSalary: number;
+  advanceSalaryPaid: number;
   monthlyNetSalary: number;
   lateEntriesThisMonth: number;
 }
@@ -100,10 +133,90 @@ interface AdminAnalytics {
 const serialize = <T extends { id: string }>(id: string, data: Omit<T, 'id'>): T =>
   ({ id, ...data }) as T;
 
+const isPresentLikeStatus = (status: AttendanceStatus) =>
+  status === 'present' || status === 'late' || status === 'half_day';
+
+const hasPunchError = (row: AttendanceRecord) => {
+  if (!isPresentLikeStatus(row.status)) {
+    return false;
+  }
+  const hasIn = !!row.checkInTime || !!row.punchTime;
+  const hasOut = !!row.checkOutTime;
+  if (!hasIn) {
+    return true;
+  }
+  return !hasOut;
+};
+
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (typeof error === 'object' && error !== null) {
+    const maybeMessage = (error as { message?: unknown }).message;
+    if (typeof maybeMessage === 'string') {
+      return maybeMessage;
+    }
+  }
+  return 'Unknown error';
+};
+
+const isTransientFirestoreError = (error: unknown) => {
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    message.includes('firestore/unavailable') ||
+    message.includes('unavailable') ||
+    message.includes('deadline') ||
+    message.includes('network')
+  );
+};
+
+const toUserErrorMessage = (error: unknown) => {
+  const message = getErrorMessage(error);
+  const lower = message.toLowerCase();
+  if (
+    lower.includes('firestore/unavailable') ||
+    lower.includes('unavailable') ||
+    lower.includes('network')
+  ) {
+    return 'Firestore temporarily unavailable. Check internet and retry. If offline, wait and retry when network is back.';
+  }
+  return message;
+};
+
+async function withFirestoreRetry<T>(operation: () => Promise<T>) {
+  const retryDelaysMs = [0, 500, 1200, 2200];
+  let lastError: unknown;
+  for (const delayMs of retryDelaysMs) {
+    if (delayMs > 0) {
+      await new Promise<void>(resolve => setTimeout(() => resolve(), delayMs));
+    }
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientFirestoreError(error)) {
+        throw error;
+      }
+      try {
+        await firestore().disableNetwork();
+      } catch {
+        // best effort
+      }
+      try {
+        await firestore().enableNetwork();
+      } catch {
+        // best effort
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Firestore unavailable.');
+}
+
 export const hrmsApi = createApi({
   reducerPath: 'hrmsApi',
   baseQuery: fakeBaseQuery<FirestoreError>(),
-  tagTypes: ['Shops', 'Employees', 'Attendance', 'Salary', 'Dashboard', 'Reports', 'Settings', 'Biometric'],
+  tagTypes: ['Shops', 'Employees', 'Attendance', 'Salary', 'Dashboard', 'Reports', 'Settings', 'Biometric', 'Advance'],
   endpoints: builder => ({
     getShops: builder.query<Shop[], void>({
       async queryFn() {
@@ -217,19 +330,20 @@ export const hrmsApi = createApi({
           const id = incomingId ?? employeesCol(input.shopId).doc().id;
           const now = nowIso();
           const docRef = employeesCol(rest.shopId).doc(id);
-          const existing = await docRef.get();
 
           const payload: Employee = {
             ...rest,
             id,
-            createdAt: existing.exists() ? (existing.data()?.createdAt ?? now) : now,
+            createdAt: rest.createdAt ?? now,
             updatedAt: now,
           };
 
-          await docRef.set(payload);
+          await withFirestoreRetry(async () => {
+            await docRef.set(payload, { merge: true });
+          });
           return { data: payload };
         } catch (error) {
-          return { error: { message: (error as Error).message } };
+          return { error: { message: toUserErrorMessage(error) } };
         }
       },
       invalidatesTags: ['Employees', 'Dashboard'],
@@ -283,6 +397,8 @@ export const hrmsApi = createApi({
                 rawLogId: record.rawLogId ?? '',
                 biometricDeviceId: record.biometricDeviceId ?? '',
                 syncedAt: record.syncedAt ?? '',
+                checkInTime: record.checkInTime ?? '',
+                checkOutTime: record.checkOutTime ?? '',
                 notes: record.notes ?? '',
                 createdBy: payload.createdBy,
                 createdAt: now,
@@ -303,6 +419,11 @@ export const hrmsApi = createApi({
     generateMonthlySalary: builder.mutation<SalaryMonthly[], SalaryGeneratePayload>({
       async queryFn({ shopId, month, overtimeHoursByEmployeeId }) {
         try {
+          const existingSalary = await salaryCol(shopId).where('month', '==', month).limit(1).get();
+          if (!existingSalary.empty) {
+            return { error: { message: 'Salary already generated for this month. Generation is allowed once per month.' } };
+          }
+
           const payrollSnap = await payrollSettingsDoc(shopId).get();
           const payroll = (payrollSnap.data() as PayrollSettings | undefined) ?? {
             lateThreshold: 3,
@@ -314,10 +435,10 @@ export const hrmsApi = createApi({
           const employees = employeesSnap.docs.map(doc => doc.data() as Employee);
 
           const { start, end } = monthDateRange(month);
-          const attendanceSnap = await attendanceCol(shopId)
-            .where('date', '>=', start)
-            .where('date', '<=', end)
-            .get();
+          const [attendanceSnap, advancesSnap] = await Promise.all([
+            attendanceCol(shopId).where('date', '>=', start).where('date', '<=', end).get(),
+            advancesCol(shopId).where('month', '==', month).get(),
+          ]);
 
           const attendanceByEmployee = new Map<string, AttendanceRecord[]>();
           attendanceSnap.docs.forEach(doc => {
@@ -325,6 +446,12 @@ export const hrmsApi = createApi({
             const existing = attendanceByEmployee.get(entry.employeeId) ?? [];
             existing.push(entry);
             attendanceByEmployee.set(entry.employeeId, existing);
+          });
+          const advanceByEmployee = new Map<string, number>();
+          advancesSnap.docs.forEach(doc => {
+            const entry = doc.data() as EmployeeAdvance;
+            const existing = advanceByEmployee.get(entry.employeeId) ?? 0;
+            advanceByEmployee.set(entry.employeeId, existing + Number(entry.amount || 0));
           });
 
           const batch = shopDoc(shopId).firestore.batch();
@@ -335,13 +462,14 @@ export const hrmsApi = createApi({
             const presentDays = attendance.filter(a => a.status === 'present').length;
             const absentDays = attendance.filter(a => a.status === 'absent').length;
             const halfDays = attendance.filter(a => a.status === 'half_day').length;
+            const leaveDays = attendance.filter(a => a.status === 'leave').length;
             const lateEntries = attendance.filter(a => a.status === 'late').length;
             const overtimeHours = overtimeHoursByEmployeeId?.[employee.id] ?? 0;
 
             const calc = calculateSalary({
               month,
               basicSalary: employee.basicSalary,
-              presentDays,
+              presentDays: presentDays + leaveDays,
               absentDays,
               halfDays,
               lateEntries,
@@ -352,6 +480,9 @@ export const hrmsApi = createApi({
             });
 
             const id = `${employee.id}_${month}`;
+            const grossSalary = calc.netSalary;
+            const advanceDeduction = Math.max(0, advanceByEmployee.get(employee.id) ?? 0);
+            const netSalary = Math.max(0, grossSalary - advanceDeduction);
             const salary: SalaryMonthly = {
               id,
               employeeId: employee.id,
@@ -361,13 +492,16 @@ export const hrmsApi = createApi({
               presentDays,
               absentDays,
               halfDays,
+              leaveDays,
               lateEntries,
               lateDeductionDays: calc.lateDeductionDays,
               payableDays: calc.payableDays,
               perDaySalary: calc.perDaySalary,
               overtimeHours,
               overtimeAmount: calc.overtimeAmount,
-              netSalary: calc.netSalary,
+              grossSalary,
+              advanceDeduction,
+              netSalary,
               generatedAt: nowIso(),
             };
 
@@ -381,7 +515,141 @@ export const hrmsApi = createApi({
           return { error: { message: (error as Error).message } };
         }
       },
-      invalidatesTags: ['Salary', 'Reports', 'Dashboard'],
+      invalidatesTags: ['Salary', 'Reports', 'Dashboard', 'Advance'],
+    }),
+
+    getEmployeeAdvances: builder.query<EmployeeAdvance[], { shopId: string; month: string }>({
+      async queryFn({ shopId, month }) {
+        try {
+          const snapshot = await advancesCol(shopId).where('month', '==', month).orderBy('paidAt', 'desc').get();
+          const data = snapshot.docs.map(doc =>
+            serialize<EmployeeAdvance>(doc.id, doc.data() as Omit<EmployeeAdvance, 'id'>),
+          );
+          return { data };
+        } catch (error) {
+          return { error: { message: (error as Error).message } };
+        }
+      },
+      providesTags: ['Advance'],
+    }),
+
+    addEmployeeAdvance: builder.mutation<EmployeeAdvance, AdvanceEntryPayload>({
+      async queryFn(input) {
+        try {
+          if (input.amount <= 0) {
+            return { error: { message: 'Advance/Loan amount should be greater than zero.' } };
+          }
+          const now = nowIso();
+          const id = advancesCol(input.shopId).doc().id;
+          const payload: EmployeeAdvance = {
+            id,
+            shopId: input.shopId,
+            employeeId: input.employeeId,
+            month: input.month,
+            amount: Number(input.amount),
+            type: input.type,
+            notes: input.notes?.trim() || '',
+            paidAt: input.paidAt,
+            createdBy: input.createdBy,
+            createdAt: now,
+            updatedAt: now,
+          };
+          await withFirestoreRetry(async () => {
+            await advancesCol(input.shopId).doc(id).set(payload);
+          });
+          return { data: payload };
+        } catch (error) {
+          return { error: { message: toUserErrorMessage(error) } };
+        }
+      },
+      invalidatesTags: ['Advance', 'Reports', 'Salary'],
+    }),
+
+    getShifts: builder.query<ShiftMaster[], string>({
+      async queryFn(shopId) {
+        try {
+          const snapshot = await withFirestoreRetry(async () => shiftsCol(shopId).get());
+          const data = snapshot.docs
+            .map(doc => serialize<ShiftMaster>(doc.id, doc.data() as Omit<ShiftMaster, 'id'>))
+            .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+          return { data };
+        } catch (error) {
+          try {
+            const cacheSnapshot = await shiftsCol(shopId).get({ source: 'cache' });
+            const cacheData = cacheSnapshot.docs
+              .map(doc => serialize<ShiftMaster>(doc.id, doc.data() as Omit<ShiftMaster, 'id'>))
+              .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+            return { data: cacheData };
+          } catch {
+            return { error: { message: toUserErrorMessage(error) } };
+          }
+        }
+      },
+      providesTags: ['Settings'],
+    }),
+
+    upsertShift: builder.mutation<ShiftMaster, ShiftInput>({
+      async queryFn(input) {
+        try {
+          const { id: incomingId, ...rest } = input;
+          const id = incomingId ?? shiftsCol(input.shopId).doc().id;
+          const now = nowIso();
+          const docRef = shiftsCol(rest.shopId).doc(id);
+          const payload: ShiftMaster = {
+            ...rest,
+            id,
+            createdAt: rest.createdAt ?? now,
+            updatedAt: now,
+          };
+          await withFirestoreRetry(async () => {
+            await docRef.set(payload, { merge: true });
+          });
+          return { data: payload };
+        } catch (error) {
+          return { error: { message: toUserErrorMessage(error) } };
+        }
+      },
+      invalidatesTags: ['Settings', 'Reports'],
+    }),
+
+    getWeeklyShiftPlan: builder.query<WeeklyShiftPlan[], { shopId: string; weekStartDate: string }>({
+      async queryFn({ shopId, weekStartDate }) {
+        try {
+          const snapshot = await weeklyShiftPlansCol(shopId).where('weekStartDate', '==', weekStartDate).get();
+          const data = snapshot.docs.map(doc =>
+            serialize<WeeklyShiftPlan>(doc.id, doc.data() as Omit<WeeklyShiftPlan, 'id'>),
+          );
+          return { data };
+        } catch (error) {
+          return { error: { message: (error as Error).message } };
+        }
+      },
+      providesTags: ['Settings'],
+    }),
+
+    upsertWeeklyShiftPlan: builder.mutation<WeeklyShiftPlan, WeeklyShiftPlanInput>({
+      async queryFn(input) {
+        try {
+          const { id: incomingId, ...rest } = input;
+          const generated = `${rest.employeeId}_${rest.weekStartDate}_${rest.dayOfWeek}`;
+          const id = incomingId ?? generated;
+          const now = nowIso();
+          const docRef = weeklyShiftPlansCol(rest.shopId).doc(id);
+          const payload: WeeklyShiftPlan = {
+            ...rest,
+            id,
+            createdAt: rest.createdAt ?? now,
+            updatedAt: now,
+          };
+          await withFirestoreRetry(async () => {
+            await docRef.set(payload, { merge: true });
+          });
+          return { data: payload };
+        } catch (error) {
+          return { error: { message: toUserErrorMessage(error) } };
+        }
+      },
+      invalidatesTags: ['Settings', 'Reports'],
     }),
 
     getMonthlySalary: builder.query<SalaryMonthly[], { shopId: string; month: string }>({
@@ -470,13 +738,13 @@ export const hrmsApi = createApi({
               let halfDay = 0;
               attendanceSnap.docs.forEach(doc => {
                 const row = doc.data() as AttendanceRecord;
-                if (row.status === 'present') {
+                if (row.status === 'present' || row.status === 'leave') {
                   present += 1;
                 } else if (row.status === 'absent') {
                   absent += 1;
                 } else if (row.status === 'late') {
                   late += 1;
-                } else {
+                } else if (row.status === 'half_day') {
                   halfDay += 1;
                 }
               });
@@ -543,11 +811,14 @@ export const hrmsApi = createApi({
     }),
 
     getShopDashboard: builder.query<ShopDashboard, { shopId: string; todayDate: string; month: string }>({
-      async queryFn({ shopId, todayDate, month }) {
+      async queryFn({ shopId, todayDate: selectedDate, month }) {
         try {
-          const employeeSnap = await employeesCol(shopId).where('status', '==', 'active').get();
-          const todayAttendanceSnap = await attendanceCol(shopId).where('date', '==', todayDate).get();
-          const salarySnap = await salaryCol(shopId).where('month', '==', month).get();
+          const [employeeSnap, todayAttendanceSnap, salarySnap, advancesSnap] = await Promise.all([
+            employeesCol(shopId).where('status', '==', 'active').get(),
+            attendanceCol(shopId).where('date', '==', selectedDate).get(),
+            salaryCol(shopId).where('month', '==', month).get(),
+            advancesCol(shopId).where('month', '==', month).get(),
+          ]);
 
           let monthlyNetSalary = 0;
           let lateEntriesThisMonth = 0;
@@ -557,11 +828,38 @@ export const hrmsApi = createApi({
             lateEntriesThisMonth += row.lateEntries;
           });
 
+          let presentStaff = 0;
+          let punchErrors = 0;
+          todayAttendanceSnap.docs.forEach(doc => {
+            const row = doc.data() as AttendanceRecord;
+            if (isPresentLikeStatus(row.status)) {
+              presentStaff += 1;
+            }
+            if (hasPunchError(row)) {
+              punchErrors += 1;
+            }
+          });
+
+          let currentMonthProjectedSalary = 0;
+          employeeSnap.docs.forEach(doc => {
+            const employee = doc.data() as Employee;
+            currentMonthProjectedSalary += Number(employee.basicSalary || 0);
+          });
+
+          let advanceSalaryPaid = 0;
+          advancesSnap.docs.forEach(doc => {
+            const row = doc.data() as EmployeeAdvance;
+            advanceSalaryPaid += Number(row.amount || 0);
+          });
+
           return {
             data: {
               totalStaff: employeeSnap.size,
-              todayAttendance: todayAttendanceSnap.size,
-              todayDate,
+              presentStaff,
+              punchErrors,
+              todayDate: selectedDate,
+              currentMonthProjectedSalary: Number(currentMonthProjectedSalary.toFixed(2)),
+              advanceSalaryPaid: Number(advanceSalaryPaid.toFixed(2)),
               monthlyNetSalary: Number(monthlyNetSalary.toFixed(2)),
               lateEntriesThisMonth,
             },
@@ -602,7 +900,7 @@ export const hrmsApi = createApi({
           let absent = 0;
           todayAttendanceSnap.docs.forEach(doc => {
             const row = doc.data() as AttendanceRecord;
-            if (row.status === 'present') {
+            if (row.status === 'present' || row.status === 'leave') {
               present += 1;
             } else if (row.status === 'late') {
               late += 1;
@@ -620,7 +918,12 @@ export const hrmsApi = createApi({
               let attendance = 0;
               snap.docs.forEach(doc => {
                 const row = doc.data() as AttendanceRecord;
-                if (row.status === 'present' || row.status === 'late' || row.status === 'half_day') {
+                if (
+                  row.status === 'present' ||
+                  row.status === 'leave' ||
+                  row.status === 'late' ||
+                  row.status === 'half_day'
+                ) {
                   attendance += 1;
                 }
               });
@@ -774,6 +1077,12 @@ export const {
   useUpsertBulkAttendanceMutation,
   useGenerateMonthlySalaryMutation,
   useGetMonthlySalaryQuery,
+  useGetEmployeeAdvancesQuery,
+  useAddEmployeeAdvanceMutation,
+  useGetShiftsQuery,
+  useUpsertShiftMutation,
+  useGetWeeklyShiftPlanQuery,
+  useUpsertWeeklyShiftPlanMutation,
   useMarkSalaryPaidMutation,
   useGetAdminDashboardQuery,
   useGetAdminAnalyticsQuery,

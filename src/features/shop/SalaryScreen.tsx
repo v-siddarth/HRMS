@@ -5,13 +5,21 @@ import dayjs from 'dayjs';
 import { Card, Field, PrimaryButton, Screen } from '../../components/ui';
 import { useAppSelector } from '../../store/hooks';
 import {
+  useAddEmployeeAdvanceMutation,
   useGenerateMonthlySalaryMutation,
+  useGetEmployeeAdvancesQuery,
   useGetEmployeesQuery,
   useGetMonthlySalaryQuery,
   useMarkSalaryPaidMutation,
   useUpsertEmployeeMutation,
 } from '../../store/hrmsApi';
-import { currentMonth } from '../../utils/date';
+import {
+  currentMonth,
+  formatDisplayDate,
+  formatDisplayDateTime24H,
+  normalizeDateInput,
+  todayDate,
+} from '../../utils/date';
 import { colors } from '../../theme/colors';
 
 export function SalaryScreen() {
@@ -23,15 +31,26 @@ export function SalaryScreen() {
   const [query, setQuery] = useState('');
   const [editableSalaryByEmployeeId, setEditableSalaryByEmployeeId] = useState<Record<string, string>>({});
   const [editableOtByEmployeeId, setEditableOtByEmployeeId] = useState<Record<string, string>>({});
+  const [advanceEmployeeId, setAdvanceEmployeeId] = useState('');
+  const [advanceType, setAdvanceType] = useState<'advance' | 'loan'>('advance');
+  const [advanceAmount, setAdvanceAmount] = useState('');
+  const [advanceDateInput, setAdvanceDateInput] = useState(formatDisplayDate(todayDate()));
+  const [advanceNotes, setAdvanceNotes] = useState('');
   const [updatingEmployeeId, setUpdatingEmployeeId] = useState('');
   const [markingPaidId, setMarkingPaidId] = useState('');
+  const [savingAdvance, setSavingAdvance] = useState(false);
 
   const { data: employees = [] } = useGetEmployeesQuery(shopId, { skip: !shopId });
   const { data: rows = [], refetch, isLoading } = useGetMonthlySalaryQuery({ shopId, month }, { skip: !shopId });
+  const { data: advances = [], refetch: refetchAdvances } = useGetEmployeeAdvancesQuery(
+    { shopId, month },
+    { skip: !shopId },
+  );
 
   const [generateSalary, { isLoading: generating }] = useGenerateMonthlySalaryMutation();
   const [updateEmployee] = useUpsertEmployeeMutation();
   const [markSalaryPaid] = useMarkSalaryPaidMutation();
+  const [addEmployeeAdvance] = useAddEmployeeAdvanceMutation();
 
   useEffect(() => {
     const salaryMap: Record<string, string> = {};
@@ -63,10 +82,26 @@ export function SalaryScreen() {
   }, [employees, query, rows]);
 
   const totalNet = useMemo(() => rows.reduce((acc, row) => acc + row.netSalary, 0), [rows]);
+  const totalAdvanceDeducted = useMemo(() => rows.reduce((acc, row) => acc + (row.advanceDeduction ?? 0), 0), [rows]);
   const paidCount = useMemo(() => rows.filter(row => !!row.salaryPaidAt).length, [rows]);
+  const totalPaidAmount = useMemo(
+    () => rows.filter(row => !!row.salaryPaidAt).reduce((acc, row) => acc + row.netSalary, 0),
+    [rows],
+  );
+  const totalPendingAmount = useMemo(
+    () => rows.filter(row => !row.salaryPaidAt).reduce((acc, row) => acc + row.netSalary, 0),
+    [rows],
+  );
+  const monthLocked = rows.length > 0;
+  const totalAdvanceEntered = useMemo(() => advances.reduce((acc, entry) => acc + Number(entry.amount || 0), 0), [advances]);
+  const advanceDate = normalizeDateInput(advanceDateInput);
 
   const onGenerate = async () => {
     if (!shopId) {
+      return;
+    }
+    if (monthLocked) {
+      Alert.alert('Locked', 'Salary generation is allowed once per month only.');
       return;
     }
     try {
@@ -97,25 +132,57 @@ export function SalaryScreen() {
     try {
       setUpdatingEmployeeId(employeeId);
       await updateEmployee({
+        ...employee,
         id: employee.id,
         shopId,
-        name: employee.name,
-        phone: employee.phone,
-        address: employee.address,
-        designation: employee.designation,
-        joiningDate: employee.joiningDate,
-        salaryType: employee.salaryType,
         basicSalary: nextSalary,
         overtimeRatePerHour: nextOt,
-        status: employee.status,
       }).unwrap();
-      Alert.alert('Updated', 'Base salary and OT rate updated.');
-      await generateSalary({ shopId, month }).unwrap();
-      await refetch();
+      Alert.alert('Updated', 'Base salary and OT rate updated. It will apply in next salary generation cycle.');
     } catch (error) {
       Alert.alert('Update failed', (error as Error).message);
     } finally {
       setUpdatingEmployeeId('');
+    }
+  };
+
+  const onSaveAdvance = async () => {
+    if (!shopId || !user) {
+      return;
+    }
+    if (!advanceEmployeeId) {
+      Alert.alert('Validation', 'Please select staff for advance/loan.');
+      return;
+    }
+    const amount = Number(advanceAmount);
+    if (Number.isNaN(amount) || amount <= 0) {
+      Alert.alert('Validation', 'Enter a valid advance amount.');
+      return;
+    }
+    if (!advanceDate) {
+      Alert.alert('Validation', 'Enter valid advance date in DD.MM.YYYY.');
+      return;
+    }
+    try {
+      setSavingAdvance(true);
+      await addEmployeeAdvance({
+        shopId,
+        employeeId: advanceEmployeeId,
+        month,
+        amount,
+        type: advanceType,
+        notes: advanceNotes,
+        paidAt: advanceDate,
+        createdBy: user.uid,
+      }).unwrap();
+      await refetchAdvances();
+      setAdvanceAmount('');
+      setAdvanceNotes('');
+      Alert.alert('Saved', `${advanceType === 'advance' ? 'Advance' : 'Loan'} entry recorded.`);
+    } catch (error) {
+      Alert.alert('Save failed', (error as Error).message);
+    } finally {
+      setSavingAdvance(false);
     }
   };
 
@@ -178,11 +245,65 @@ export function SalaryScreen() {
             </Card>
 
             <View style={styles.summaryRow}>
-              <SummaryCard label="Records" value={`${rows.length}`} tone="slate" />
-              <SummaryCard label="Paid" value={`${paidCount}`} tone="green" />
-              <SummaryCard label="Pending" value={`${Math.max(0, rows.length - paidCount)}`} tone="amber" />
-              <SummaryCard label="Net Total" value={shortCurrency(totalNet)} tone="blue" />
+              <SummaryCard label="Total Staff Nos" value={`${rows.length}`} tone="slate" />
+              <SummaryCard label="Paid Staff Nos" value={`${paidCount}`} tone="green" />
+              <SummaryCard label="Pending Staff Nos" value={`${Math.max(0, rows.length - paidCount)}`} tone="amber" />
+              <SummaryCard label="Net Amount" value={shortCurrency(totalNet)} tone="blue" />
+              <SummaryCard label="Paid Amount" value={shortCurrency(totalPaidAmount)} tone="green" />
+              <SummaryCard label="Pending Amount" value={shortCurrency(totalPendingAmount)} tone="amber" />
             </View>
+
+            <Card>
+              <Text style={styles.advanceTitle}>Advance / Loan Entry</Text>
+              <Text style={styles.advanceSub}>This amount is auto-deducted while monthly salary is generated.</Text>
+              <Field label="Advance Date (DD.MM.YYYY)" value={advanceDateInput} onChangeText={setAdvanceDateInput} />
+              <View style={styles.advanceTypeRow}>
+                <Pressable
+                  style={[styles.advanceTypeChip, advanceType === 'advance' ? styles.advanceTypeChipActive : undefined]}
+                  onPress={() => setAdvanceType('advance')}>
+                  <Text style={[styles.advanceTypeText, advanceType === 'advance' ? styles.advanceTypeTextActive : undefined]}>
+                    Advance
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.advanceTypeChip, advanceType === 'loan' ? styles.advanceTypeChipActive : undefined]}
+                  onPress={() => setAdvanceType('loan')}>
+                  <Text style={[styles.advanceTypeText, advanceType === 'loan' ? styles.advanceTypeTextActive : undefined]}>Loan</Text>
+                </Pressable>
+              </View>
+              <Field
+                label="Amount"
+                value={advanceAmount}
+                onChangeText={setAdvanceAmount}
+                keyboardType="numeric"
+                placeholder="Enter amount"
+              />
+              <Field label="Notes (Optional)" value={advanceNotes} onChangeText={setAdvanceNotes} placeholder="Remarks" />
+              <Text style={styles.advancePickLabel}>Select Staff</Text>
+              <View style={styles.advanceEmployeeWrap}>
+                {employees.map(emp => {
+                  const selected = advanceEmployeeId === emp.id;
+                  return (
+                    <Pressable
+                      key={emp.id}
+                      style={[styles.advanceEmpChip, selected ? styles.advanceEmpChipSelected : undefined]}
+                      onPress={() => setAdvanceEmployeeId(emp.id)}>
+                      <Text style={[styles.advanceEmpChipText, selected ? styles.advanceEmpChipTextSelected : undefined]}>
+                        {emp.employeeCode ? `${emp.employeeCode} - ` : ''}
+                        {emp.name}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <View style={styles.advanceButtonWrap}>
+                <PrimaryButton title={savingAdvance ? 'Saving...' : 'Save Advance/Loan'} onPress={onSaveAdvance} loading={savingAdvance} />
+              </View>
+              <View style={styles.advanceMetaRow}>
+                <Text style={styles.advanceMetaText}>Total Entered: {shortCurrency(totalAdvanceEntered)}</Text>
+                <Text style={styles.advanceMetaText}>Deducted In Salary: {shortCurrency(totalAdvanceDeducted)}</Text>
+              </View>
+            </Card>
 
             <Card>
               <Field label="Search Salary Records" value={query} onChangeText={setQuery} placeholder="Name / designation / phone" />
@@ -235,9 +356,11 @@ export function SalaryScreen() {
               <View style={styles.moneyWrap}>
                 <InfoRow label="Per Day Salary" value={`INR ${row.perDaySalary.toFixed(2)}`} />
                 <InfoRow label="Overtime Amount" value={`INR ${row.overtimeAmount.toFixed(2)}`} />
+                <InfoRow label="Gross Salary" value={`INR ${(row.grossSalary ?? row.netSalary).toFixed(2)}`} />
+                <InfoRow label="Advance Deduction" value={`INR ${(row.advanceDeduction ?? 0).toFixed(2)}`} />
                 <InfoRow label="Net Salary" value={`INR ${row.netSalary.toFixed(2)}`} strong />
-                <InfoRow label="Generated At" value={dayjs(row.generatedAt).format('DD MMM YYYY, hh:mm A')} />
-                <InfoRow label="Paid At" value={row.salaryPaidAt ? dayjs(row.salaryPaidAt).format('DD MMM YYYY, hh:mm A') : '-'} />
+                <InfoRow label="Generated At" value={formatDisplayDateTime24H(row.generatedAt)} />
+                <InfoRow label="Paid At" value={formatDisplayDateTime24H(row.salaryPaidAt)} />
               </View>
 
               <View style={styles.editPanel}>
@@ -461,6 +584,86 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 20,
     maxWidth: '100%',
+  },
+  advanceTitle: {
+    color: colors.textPrimary,
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  advanceSub: {
+    color: colors.textSecondary,
+    fontWeight: '500',
+    lineHeight: 18,
+    fontSize: 12,
+  },
+  advanceTypeRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  advanceTypeChip: {
+    flex: 1,
+    minHeight: 40,
+    borderWidth: 1,
+    borderColor: '#d1d9e4',
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+  },
+  advanceTypeChipActive: {
+    borderColor: '#b7ead3',
+    backgroundColor: '#e8f9f1',
+  },
+  advanceTypeText: {
+    color: colors.textSecondary,
+    fontWeight: '700',
+  },
+  advanceTypeTextActive: {
+    color: '#0a7a5b',
+  },
+  advancePickLabel: {
+    color: colors.textPrimary,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  advanceEmployeeWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  advanceEmpChip: {
+    borderWidth: 1,
+    borderColor: '#d1d9e4',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#fff',
+  },
+  advanceEmpChipSelected: {
+    borderColor: '#b7ead3',
+    backgroundColor: '#e8f9f1',
+  },
+  advanceEmpChipText: {
+    color: colors.textSecondary,
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  advanceEmpChipTextSelected: {
+    color: '#0a7a5b',
+  },
+  advanceButtonWrap: {
+    marginTop: 2,
+  },
+  advanceMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  advanceMetaText: {
+    flex: 1,
+    color: colors.textMuted,
+    fontWeight: '700',
+    fontSize: 12,
   },
   sectionCount: {
     color: colors.textPrimary,
