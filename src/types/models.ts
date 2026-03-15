@@ -22,7 +22,15 @@ export interface Shop {
   contactNumber: string;
   email: string;
   username: string;
-  password: string;
+  // One-time password used only for provisioning Firebase Auth user.
+  bootstrapPassword?: string;
+  // Legacy plaintext field kept optional for backward compatibility during migration.
+  password?: string;
+  authUid?: string;
+  authProvisionStatus?: 'pending' | 'provisioned' | 'error';
+  authProvisionedAt?: string;
+  authLastSyncedAt?: string;
+  authLastError?: string;
   status: ShopStatus;
   createdByAdminUid: string;
   createdAt: string;

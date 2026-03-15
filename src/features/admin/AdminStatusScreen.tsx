@@ -4,6 +4,7 @@ import { Card, Field, Screen } from '../../components/ui';
 import { useGetShopsQuery, useUpsertShopMutation } from '../../store/hrmsApi';
 import { colors } from '../../theme/colors';
 import type { ShopStatus } from '../../types/models';
+import { logError, logInfo } from '../../utils/logger';
 
 export function AdminStatusScreen() {
   const [query, setQuery] = useState('');
@@ -37,6 +38,7 @@ export function AdminStatusScreen() {
 
     try {
       setUpdatingShopId(shopId);
+      logInfo('ADMIN_SHOP_STATUS_UPDATE_ATTEMPT', { shopId, from: shop.status, to: nextStatus });
       await upsertShop({
         id: shop.id,
         shopName: shop.shopName,
@@ -45,13 +47,18 @@ export function AdminStatusScreen() {
         contactNumber: shop.contactNumber,
         email: shop.email,
         username: shop.username,
-        password: shop.password,
         status: nextStatus,
         createdByAdminUid: shop.createdByAdminUid,
+        authUid: shop.authUid,
+        authProvisionStatus: shop.authProvisionStatus,
+        authProvisionedAt: shop.authProvisionedAt,
+        authLastSyncedAt: shop.authLastSyncedAt,
+        authLastError: shop.authLastError,
       }).unwrap();
       Alert.alert('Updated', `Shop marked as ${nextStatus}.`);
     } catch (error) {
-      Alert.alert('Update failed', (error as Error).message);
+      const errorRef = logError('ADMIN_SHOP_STATUS_UPDATE_FAILED', error, { shopId, from: shop.status, to: nextStatus });
+      Alert.alert('Update failed', `${(error as Error).message}\nRef: ${errorRef}`);
     } finally {
       setUpdatingShopId('');
     }
@@ -109,6 +116,8 @@ export function AdminStatusScreen() {
                     <InfoRow label="Email" value={shop.email} />
                     <InfoRow label="Contact" value={shop.contactNumber} />
                     <InfoRow label="Username" value={shop.username} />
+                    <InfoRow label="Auth" value={(shop.authProvisionStatus ?? 'pending').toUpperCase()} />
+                    <InfoRow label="Auth UID" value={shop.authUid || '-'} />
                   </View>
 
                   <View style={styles.statusActions}>

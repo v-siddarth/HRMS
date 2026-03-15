@@ -1,13 +1,17 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import type { DrawerContentComponentProps } from '@react-navigation/drawer';
+import { DrawerContentScrollView, type DrawerContentComponentProps } from '@react-navigation/drawer';
 import { useAppSelector } from '../../store/hooks';
 
 export function AdminDrawerContent(props: DrawerContentComponentProps) {
   const user = useAppSelector(state => state.auth.user);
 
   return (
-    <View style={styles.container}>
+    <DrawerContentScrollView
+      {...props}
+      style={styles.container}
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={false}>
       <View style={styles.topBlock}>
         <Text style={styles.heading}>HRMS Admin</Text>
         <Text style={styles.email}>{user?.email ?? 'Unknown'}</Text>
@@ -21,13 +25,17 @@ export function AdminDrawerContent(props: DrawerContentComponentProps) {
           <Text style={styles.menuText}>Profile</Text>
         </Pressable>
       </View>
-    </View>
+    </DrawerContentScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    backgroundColor: '#f5f8fc',
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 20,
     backgroundColor: '#f5f8fc',
   },
   topBlock: {

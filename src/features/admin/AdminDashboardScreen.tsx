@@ -40,17 +40,17 @@ function MetricCard({
   tone: 'blue' | 'green' | 'red' | 'slate';
 }) {
   const bgByTone = {
-    blue: '#e6effd',
-    green: '#e6f7f1',
-    red: '#fdeeee',
-    slate: '#eef2f7',
+    blue: colors.primarySoft,
+    green: colors.successSoft,
+    red: colors.dangerSoft,
+    slate: colors.surfaceMuted,
   } as const;
 
   const textByTone = {
-    blue: '#0f4ea8',
-    green: '#0c8a69',
-    red: '#c43939',
-    slate: '#1f2937',
+    blue: colors.primary,
+    green: colors.success,
+    red: colors.danger,
+    slate: colors.textPrimary,
   } as const;
 
   return (
@@ -63,17 +63,19 @@ function MetricCard({
 
 const styles = StyleSheet.create({
   content: {
-    gap: 12,
-    paddingBottom: 20,
+    gap: 14,
+    paddingBottom: 24,
   },
   hero: {
     overflow: 'hidden',
     backgroundColor: colors.primary,
-    borderRadius: 20,
-    padding: 18,
-    gap: 6,
+    borderRadius: 22,
+    padding: 20,
+    gap: 8,
     minHeight: 132,
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#2f6ec6',
   },
   heroGlowTop: {
     position: 'absolute',
@@ -96,7 +98,7 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
   title: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '800',
     color: '#ffffff',
   },
@@ -109,17 +111,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
+    justifyContent: 'space-between',
   },
   metricCard: {
-    width: '48%',
+    width: '47.5%',
     minHeight: 112,
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#dbe5f2',
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 12,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.07,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 10,
+    elevation: 2,
   },
   metricLabel: {
     color: colors.textSecondary,

@@ -8,7 +8,8 @@
     "lint": "eslint .",
     "start": "react-native start",
     "test": "jest",
-    "auth:sync-shop-claims": "node scripts/sync-shop-manager-auth.js"
+    "auth:sync-shop-claims": "node scripts/sync-shop-manager-auth.js",
+    "auth:audit-shop-claims": "node scripts/audit-shop-auth-consistency.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",

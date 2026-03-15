@@ -51,9 +51,14 @@ export function ProfileScreen() {
         contactNumber: contactNumber.trim(),
         email: email.trim(),
         username: shop.username,
-        password: shop.password,
         status: shop.status,
         createdByAdminUid: shop.createdByAdminUid,
+        bootstrapPassword: undefined,
+        authUid: shop.authUid,
+        authProvisionStatus: shop.authProvisionStatus,
+        authProvisionedAt: shop.authProvisionedAt,
+        authLastSyncedAt: shop.authLastSyncedAt,
+        authLastError: shop.authLastError,
       }).unwrap();
       Alert.alert('Saved', 'Shop profile updated successfully.');
     } catch (error) {

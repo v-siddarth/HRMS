@@ -5,6 +5,7 @@ import { useDeleteShopMutation, useGetShopsQuery, useUpsertShopMutation } from '
 import { useAppSelector } from '../../store/hooks';
 import type { ShopStatus } from '../../types/models';
 import { colors } from '../../theme/colors';
+import { logError, logInfo } from '../../utils/logger';
 
 interface ShopForm {
   id?: string;
@@ -14,7 +15,7 @@ interface ShopForm {
   contactNumber: string;
   email: string;
   username: string;
-  password: string;
+  bootstrapPassword: string;
   status: ShopStatus;
 }
 
@@ -25,7 +26,7 @@ const initialForm: ShopForm = {
   contactNumber: '',
   email: '',
   username: '',
-  password: '',
+  bootstrapPassword: '',
   status: 'active',
 };
 
@@ -65,30 +66,66 @@ export function ShopsScreen() {
       return;
     }
 
-    if (!form.shopName || !form.ownerName || !form.contactNumber || !form.email || !form.username || !form.password) {
-      Alert.alert('Validation', 'Please fill all required shop details including password.');
+    const trimmed = {
+      shopName: form.shopName.trim(),
+      address: form.address.trim(),
+      ownerName: form.ownerName.trim(),
+      contactNumber: form.contactNumber.trim(),
+      email: form.email.trim(),
+      username: form.username.trim(),
+      bootstrapPassword: form.bootstrapPassword.trim(),
+    };
+
+    if (!trimmed.shopName || !trimmed.ownerName || !trimmed.contactNumber || !trimmed.email || !trimmed.username) {
+      Alert.alert('Validation', 'Please fill all required shop details.');
+      return;
+    }
+    if (!form.id && trimmed.bootstrapPassword.length < 6) {
+      Alert.alert('Validation', 'Initial login password is required and must be at least 6 characters.');
       return;
     }
 
     try {
-      await upsertShop({
+      const payload = {
         id: form.id,
-        shopName: form.shopName,
-        address: form.address,
-        ownerName: form.ownerName,
-        contactNumber: form.contactNumber,
-        email: form.email,
-        username: form.username,
-        password: form.password,
+        shopName: trimmed.shopName,
+        address: trimmed.address,
+        ownerName: trimmed.ownerName,
+        contactNumber: trimmed.contactNumber,
+        email: trimmed.email,
+        username: trimmed.username,
         status: form.status,
         createdByAdminUid: authUser.uid,
-      }).unwrap();
+      };
 
-      Alert.alert('Success', 'Shop saved successfully.');
+      const upsertPayload =
+        !form.id || trimmed.bootstrapPassword
+          ? { ...payload, bootstrapPassword: trimmed.bootstrapPassword }
+          : payload;
+
+      logInfo('ADMIN_SHOP_SAVE_ATTEMPT', {
+        mode: form.id ? 'update' : 'create',
+        username: trimmed.username,
+        email: trimmed.email.toLowerCase(),
+      });
+
+      await upsertShop(upsertPayload).unwrap();
+
+      Alert.alert(
+        'Success',
+        form.id
+          ? 'Shop updated successfully.'
+          : 'Shop created. Authentication provisioning is pending until auth sync runs.',
+      );
       resetForm();
       setShowForm(false);
     } catch (error) {
-      Alert.alert('Failed', (error as Error).message);
+      const errorRef = logError('ADMIN_SHOP_SAVE_FAILED', error, {
+        mode: form.id ? 'update' : 'create',
+        username: trimmed.username,
+        email: trimmed.email.toLowerCase(),
+      });
+      Alert.alert('Failed', `${(error as Error).message}\nRef: ${errorRef}`);
     }
   };
 
@@ -101,7 +138,7 @@ export function ShopsScreen() {
       contactNumber: item.contactNumber,
       email: item.email,
       username: item.username,
-      password: item.password ?? '',
+      bootstrapPassword: '',
       status: item.status,
     });
     setShowForm(true);
@@ -115,9 +152,11 @@ export function ShopsScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
+            logInfo('ADMIN_SHOP_DELETE_ATTEMPT', { shopId });
             await deleteShop(shopId).unwrap();
           } catch (error) {
-            Alert.alert('Failed', (error as Error).message);
+            const errorRef = logError('ADMIN_SHOP_DELETE_FAILED', error, { shopId });
+            Alert.alert('Failed', `${(error as Error).message}\nRef: ${errorRef}`);
           }
         },
       },
@@ -189,10 +228,11 @@ export function ShopsScreen() {
             <Field label="Email" value={form.email} onChangeText={v => setForm(prev => ({ ...prev, email: v }))} />
             <Field label="Shop Username" value={form.username} onChangeText={v => setForm(prev => ({ ...prev, username: v }))} />
             <Field
-              label="Shop Password"
-              value={form.password}
+              label="Initial Login Password"
+              value={form.bootstrapPassword}
               secureTextEntry
-              onChangeText={v => setForm(prev => ({ ...prev, password: v }))}
+              onChangeText={v => setForm(prev => ({ ...prev, bootstrapPassword: v }))}
+              placeholder={form.id ? 'Leave blank to keep current auth password' : 'At least 6 characters'}
             />
 
             <View style={styles.buttonRow}>
@@ -235,6 +275,9 @@ export function ShopsScreen() {
                   <InfoRow label="Contact" value={item.contactNumber} />
                   <InfoRow label="Email" value={item.email} />
                   <InfoRow label="Username" value={item.username} />
+                  <InfoRow label="Auth" value={(item.authProvisionStatus ?? 'pending').toUpperCase()} />
+                  <InfoRow label="Auth UID" value={item.authUid || '-'} />
+                  <InfoRow label="Auth Error" value={item.authLastError || '-'} multiline />
                   <InfoRow label="Address" value={item.address || '-'} multiline />
                 </View>
                 <View style={styles.actionRow}>

@@ -8,6 +8,7 @@ import {
   LOCAL_SHOP_SESSION_KEY,
 } from '../config/auth';
 import { auth, shopsCol } from './firebase';
+import { logError, logInfo } from '../utils/logger';
 
 const normalize = (value: string) => value.trim().toLowerCase();
 
@@ -81,13 +82,20 @@ export const loginShopWithCredentials = async (
   identifier: string,
   password: string,
 ): Promise<AuthUser | null> => {
-  const email = identifier.trim().toLowerCase();
-  if (!email || !password) {
+  const normalizedIdentifier = normalize(identifier);
+  if (!normalizedIdentifier || !password) {
     return null;
+  }
+  if (!normalizedIdentifier.includes('@')) {
+    throw new Error('Use shop email to login. Username login is not enabled yet.');
   }
 
   try {
-    const credential = await auth().signInWithEmailAndPassword(email, password);
+    logInfo('SHOP_LOGIN_ATTEMPT', {
+      identifier: normalizedIdentifier,
+    });
+
+    const credential = await auth().signInWithEmailAndPassword(normalizedIdentifier, password);
     const tokenResult = await credential.user.getIdTokenResult(true);
     const role = String(tokenResult.claims.role ?? '');
     const tokenShopId = String(tokenResult.claims.shopId ?? '');
@@ -100,15 +108,15 @@ export const loginShopWithCredentials = async (
     if (!shopSnap.exists()) {
       throw new Error('Shop profile not found for this account.');
     }
-    const shop = { id: shopSnap.id, ...(shopSnap.data() as Omit<Shop, 'id'>) } as Shop;
-    if (shop.status !== 'active') {
+    const tokenShop = { id: shopSnap.id, ...(shopSnap.data() as Omit<Shop, 'id'>) } as Shop;
+    if (tokenShop.status !== 'active') {
       throw new Error('Shop is inactive. Contact admin.');
     }
-    if (normalize(shop.email ?? '') !== email) {
+    if (normalize(tokenShop.email ?? '') !== normalizedIdentifier) {
       throw new Error('This account email does not match assigned shop.');
     }
 
-    const user = toShopUser(shop, credential.user.uid);
+    const user = toShopUser(tokenShop, credential.user.uid);
     await setLocalShopSession(user);
     return user;
   } catch (error) {
@@ -119,8 +127,12 @@ export const loginShopWithCredentials = async (
       message.includes('auth/invalid-credential') ||
       message.includes('auth/invalid-email')
     ) {
+      if (message.includes('auth/user-not-found')) {
+        throw new Error('Shop auth user not found. Ask admin to run auth sync and try again.');
+      }
       return null;
     }
+    logError('SHOP_LOGIN_FAILED', error, { identifier: normalizedIdentifier });
     throw error;
   }
 };

@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import dayjs from 'dayjs';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Card } from '../../components/ui';
 import { useAppSelector } from '../../store/hooks';
 import { useGetShopByIdQuery, useGetShopDashboardQuery } from '../../store/hrmsApi';
@@ -29,9 +29,19 @@ export function ShopDashboardScreen() {
   const monthKey = now.format(MONTH_FORMAT);
 
   const { data: shop } = useGetShopByIdQuery(shopId, { skip: !shopId });
-  const { data, isLoading } = useGetShopDashboardQuery(
+  const { data, isLoading, refetch } = useGetShopDashboardQuery(
     { shopId, todayDate: todayKey, month: monthKey },
-    { skip: !shopId },
+    { skip: !shopId, refetchOnFocus: true, refetchOnMountOrArgChange: true },
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!shopId) {
+        return undefined;
+      }
+      void refetch();
+      return undefined;
+    }, [refetch, shopId]),
   );
 
   const activatedOn = shop?.createdAt ? formatDisplayDate(shop.createdAt) : '-';
@@ -95,7 +105,7 @@ export function ShopDashboardScreen() {
           <View style={styles.headerSubBlock}>
             <Text style={styles.smallTitle}>Home</Text>
             <Text style={styles.smallMeta}>Shop Activated: {activatedOn}</Text>
-            <Text style={styles.smallMeta}>Date: {todayLabel} // {dayName} // {currentTime}</Text>
+            <Text style={styles.smallMeta}>{`Date: ${todayLabel} | ${dayName} | ${currentTime}`}</Text>
           </View>
         </View>
 
@@ -120,6 +130,8 @@ export function ShopDashboardScreen() {
               </View>
               <View style={styles.metricBottom}>
                 <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Advance Paid"
                   style={({ pressed }) => [styles.payAdvanceBtn, pressed && styles.payAdvanceBtnPressed]}
                   onPress={() => navigation.navigate('Salary')}>
                   <Text style={styles.payAdvanceBtnText}>Advance Paid</Text>
@@ -166,17 +178,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#0c8a69',
     borderTopLeftRadius: 0,
     borderTopRightRadius: 0,
-    borderBottomLeftRadius: 14,
-    borderBottomRightRadius: 14,
-    paddingHorizontal: 14,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+    paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 14,
+    paddingBottom: 16,
     gap: 10,
     overflow: 'hidden',
   },
   bodyWrap: {
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 14,
     gap: 12,
   },
   headerGradientBase: {
@@ -219,18 +231,18 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   shopNameMain: {
-    fontSize: 36,
+    fontSize: 34,
     fontWeight: '900',
     color: '#ffffff',
   },
   shopAddressMain: {
     color: '#d9fff2',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
   },
   poweredByMain: {
     color: '#c8f6e6',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
   },
   menuBtn: {
@@ -253,16 +265,16 @@ const styles = StyleSheet.create({
   headerSubBlock: {
     borderTopWidth: 1,
     borderTopColor: '#63c9aa',
-    paddingTop: 8,
+    paddingTop: 10,
     gap: 3,
   },
   smallTitle: {
-    fontSize: 19,
+    fontSize: 18,
     fontWeight: '800',
     color: '#ffffff',
   },
   smallMeta: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: '#dffbf1',
   },
@@ -273,13 +285,18 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   metricCard: {
-    width: '48%',
-    borderWidth: 2,
-    borderColor: '#111827',
-    borderRadius: 8,
+    width: '47.5%',
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: 12,
     backgroundColor: '#ffffff',
     overflow: 'hidden',
     minHeight: 132,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.06,
+    shadowOffset: { width: 0, height: 3 },
+    shadowRadius: 8,
+    elevation: 1,
   },
   metricCardPay: {
     backgroundColor: '#edf4ff',
@@ -291,7 +308,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#111827',
+    borderBottomColor: colors.borderStrong,
   },
   metricBottom: {
     flex: 1,
@@ -311,7 +328,7 @@ const styles = StyleSheet.create({
   },
   metricLabel: {
     color: '#374151',
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
     textAlign: 'center',
   },
@@ -355,13 +372,13 @@ const styles = StyleSheet.create({
 function toneCard(tone: 'slate' | 'green' | 'red' | 'blue' | 'amber') {
   switch (tone) {
     case 'green':
-      return { backgroundColor: '#e9f8f1' };
+      return { backgroundColor: colors.successSoft };
     case 'red':
-      return { backgroundColor: '#fff1f1' };
+      return { backgroundColor: colors.dangerSoft };
     case 'blue':
       return { backgroundColor: '#edf4ff' };
     case 'amber':
-      return { backgroundColor: '#fff8ea' };
+      return { backgroundColor: colors.warningSoft };
     default:
       return { backgroundColor: '#f5f7fb' };
   }

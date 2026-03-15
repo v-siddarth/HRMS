@@ -28,13 +28,32 @@ import {
   weeklyShiftPlansCol,
 } from '../services/firebase';
 import { calculateSalary } from '../utils/salary';
-import { currentMonth, monthDateRange, todayDate } from '../utils/date';
+import { currentMonth, daysInMonth, monthDateRange, todayDate } from '../utils/date';
+import { logError, logInfo } from '../utils/logger';
 
 interface FirestoreError {
   message: string;
 }
 
-type ShopInput = Omit<Shop, 'id' | 'createdAt' | 'updatedAt'> & { id?: string };
+type ShopInput = {
+  id?: string;
+  shopName: string;
+  address: string;
+  ownerName: string;
+  contactNumber: string;
+  email: string;
+  username: string;
+  status: Shop['status'];
+  createdByAdminUid: string;
+  bootstrapPassword?: string;
+  // Legacy field kept for migration compatibility.
+  password?: string;
+  authUid?: string;
+  authProvisionStatus?: Shop['authProvisionStatus'];
+  authProvisionedAt?: string;
+  authLastSyncedAt?: string;
+  authLastError?: string;
+};
 type EmployeeInput = Omit<Employee, 'id' | 'createdAt' | 'updatedAt'> & { id?: string; createdAt?: string };
 
 interface BulkAttendancePayload {
@@ -184,6 +203,25 @@ const toUserErrorMessage = (error: unknown) => {
   return message;
 };
 
+const omitUndefinedDeep = <T>(value: T): T => {
+  if (Array.isArray(value)) {
+    return value.map(item => omitUndefinedDeep(item)) as T;
+  }
+  if (value && typeof value === 'object') {
+    const output: Record<string, unknown> = {};
+    Object.entries(value as Record<string, unknown>).forEach(([key, raw]) => {
+      if (raw === undefined) {
+        return;
+      }
+      output[key] = omitUndefinedDeep(raw);
+    });
+    return output as T;
+  }
+  return value;
+};
+
+const isValidMonthKey = (value: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
+
 async function withFirestoreRetry<T>(operation: () => Promise<T>) {
   const retryDelaysMs = [0, 500, 1200, 2200];
   let lastError: unknown;
@@ -236,8 +274,11 @@ export const hrmsApi = createApi({
         try {
           const { id: incomingId, ...rest } = input;
           const id = incomingId ?? shopsCol().doc().id;
-          const normalizedUsername = rest.username.trim();
-          const normalizedEmail = rest.email.trim().toLowerCase();
+          const normalizedUsername = String(rest.username ?? '').trim();
+          const normalizedEmail = String(rest.email ?? '').trim().toLowerCase();
+          if (!normalizedUsername || !normalizedEmail) {
+            return { error: { message: 'Username and email are required.' } };
+          }
 
           const usernameSnap = await shopsCol().where('username', '==', normalizedUsername).limit(1).get();
           const usernameConflict = usernameSnap.docs.find(doc => doc.id !== id);
@@ -254,15 +295,70 @@ export const hrmsApi = createApi({
           const now = nowIso();
           const docRef = shopsCol().doc(id);
           const existing = await docRef.get();
+          const existingData = (existing.data() as Partial<Shop> | undefined) ?? {};
+          const existingEmail = String(existingData.email ?? '').trim().toLowerCase();
+          const emailChanged = !!existingEmail && existingEmail !== normalizedEmail;
+
+          const isCreate = !existing.exists();
+          const hasBootstrap = typeof rest.bootstrapPassword === 'string' && rest.bootstrapPassword.trim().length > 0;
+          const hasLegacyPassword = typeof rest.password === 'string' && rest.password.trim().length > 0;
+          const incomingSecret = (rest.bootstrapPassword ?? rest.password ?? '').trim();
+          if (isCreate && incomingSecret.length < 6) {
+            return { error: { message: 'Initial login password must be at least 6 characters.' } };
+          }
+
+          const authStatus =
+            rest.authProvisionStatus ??
+            (rest.status === 'inactive'
+              ? existingData.authProvisionStatus ?? 'pending'
+              : rest.authUid || existingData.authUid
+                ? existingData.authProvisionStatus ?? 'provisioned'
+                : 'pending');
+
           const payload: Shop = {
             id,
-            ...rest,
+            shopName: String(rest.shopName ?? '').trim(),
+            address: String(rest.address ?? '').trim(),
+            ownerName: String(rest.ownerName ?? '').trim(),
+            contactNumber: String(rest.contactNumber ?? '').trim(),
+            status: rest.status,
+            createdByAdminUid: rest.createdByAdminUid,
             username: normalizedUsername,
             email: normalizedEmail,
+            authUid: rest.authUid ?? existingData.authUid,
+            authProvisionStatus: authStatus,
+            authProvisionedAt: rest.authProvisionedAt ?? existingData.authProvisionedAt,
+            authLastSyncedAt: rest.authLastSyncedAt ?? existingData.authLastSyncedAt,
+            authLastError: rest.authLastError ?? existingData.authLastError,
             createdAt: existing.exists() ? (existing.data()?.createdAt ?? now) : now,
             updatedAt: now,
           };
-          await docRef.set(payload);
+
+          if (hasBootstrap) {
+            payload.bootstrapPassword = incomingSecret;
+            payload.authProvisionStatus = 'pending';
+            payload.authLastError = '';
+          } else if (emailChanged) {
+            payload.authProvisionStatus = 'pending';
+            payload.authLastError = '';
+          } else if (hasLegacyPassword) {
+            payload.password = incomingSecret;
+            payload.authProvisionStatus = payload.authProvisionStatus ?? 'pending';
+          } else if (existingData.bootstrapPassword) {
+            payload.bootstrapPassword = existingData.bootstrapPassword;
+          } else if (existingData.password) {
+            payload.password = existingData.password;
+          }
+
+          const safePayload = omitUndefinedDeep(payload);
+          logInfo('SHOP_UPSERT_REQUEST', {
+            shopId: id,
+            mode: isCreate ? 'create' : 'update',
+            status: safePayload.status,
+            hasAuthUid: !!safePayload.authUid,
+          });
+
+          await docRef.set(safePayload, { merge: true });
 
           await payrollSettingsDoc(id).set(
             {
@@ -273,9 +369,14 @@ export const hrmsApi = createApi({
             { merge: true },
           );
 
-          return { data: payload };
+          return { data: safePayload };
         } catch (error) {
-          return { error: { message: (error as Error).message } };
+          const errorRef = logError('SHOP_UPSERT_FAILED', error, {
+            shopId: input.id ?? 'new',
+            username: input.username,
+            email: input.email,
+          });
+          return { error: { message: `${toUserErrorMessage(error)} (ref: ${errorRef})` } };
         }
       },
       invalidatesTags: ['Shops', 'Dashboard'],
@@ -419,25 +520,48 @@ export const hrmsApi = createApi({
     generateMonthlySalary: builder.mutation<SalaryMonthly[], SalaryGeneratePayload>({
       async queryFn({ shopId, month, overtimeHoursByEmployeeId }) {
         try {
-          const existingSalary = await salaryCol(shopId).where('month', '==', month).limit(1).get();
+          if (!isValidMonthKey(month)) {
+            return { error: { message: 'Invalid month format. Use YYYY-MM.' } };
+          }
+          if (month > currentMonth()) {
+            return { error: { message: 'Cannot generate salary for a future month.' } };
+          }
+          const existingSalary = await withFirestoreRetry(async () => salaryCol(shopId).where('month', '==', month).get());
           if (!existingSalary.empty) {
-            return { error: { message: 'Salary already generated for this month. Generation is allowed once per month.' } };
+            const existingRows = existingSalary.docs.map(doc => doc.data() as SalaryMonthly);
+            const hasPaidRows = existingRows.some(row => !!row.salaryPaidAt);
+            const canRepairZeroRows = existingRows.every(
+              row => !row.salaryPaidAt && Number(row.netSalary ?? 0) === 0,
+            );
+            if (hasPaidRows) {
+              return { error: { message: 'Salary already generated and paid entries exist for this month. Regeneration is blocked.' } };
+            }
+            if (!canRepairZeroRows) {
+              return { error: { message: 'Salary already generated for this month. Generation is allowed once per month.' } };
+            }
           }
 
-          const payrollSnap = await payrollSettingsDoc(shopId).get();
+          const payrollSnap = await withFirestoreRetry(async () => payrollSettingsDoc(shopId).get());
           const payroll = (payrollSnap.data() as PayrollSettings | undefined) ?? {
             lateThreshold: 3,
             lateDeductionDays: 0.5,
             timezone: 'Asia/Kolkata',
           };
 
-          const employeesSnap = await employeesCol(shopId).where('status', '==', 'active').get();
+          const employeesSnap = await withFirestoreRetry(async () =>
+            employeesCol(shopId).where('status', '==', 'active').get(),
+          );
           const employees = employeesSnap.docs.map(doc => doc.data() as Employee);
+          if (employees.length === 0) {
+            return { error: { message: 'No active staff found for salary generation.' } };
+          }
 
           const { start, end } = monthDateRange(month);
           const [attendanceSnap, advancesSnap] = await Promise.all([
-            attendanceCol(shopId).where('date', '>=', start).where('date', '<=', end).get(),
-            advancesCol(shopId).where('month', '==', month).get(),
+            withFirestoreRetry(async () =>
+              attendanceCol(shopId).where('date', '>=', start).where('date', '<=', end).get(),
+            ),
+            withFirestoreRetry(async () => advancesCol(shopId).where('month', '==', month).get()),
           ]);
 
           const attendanceByEmployee = new Map<string, AttendanceRecord[]>();
@@ -456,32 +580,45 @@ export const hrmsApi = createApi({
 
           const batch = shopDoc(shopId).firestore.batch();
           const rows: SalaryMonthly[] = [];
+          const generatedAt = nowIso();
+          const totalDaysInSelectedMonth = daysInMonth(month);
 
           employees.forEach(employee => {
             const attendance = attendanceByEmployee.get(employee.id) ?? [];
-            const presentDays = attendance.filter(a => a.status === 'present').length;
-            const absentDays = attendance.filter(a => a.status === 'absent').length;
-            const halfDays = attendance.filter(a => a.status === 'half_day').length;
-            const leaveDays = attendance.filter(a => a.status === 'leave').length;
-            const lateEntries = attendance.filter(a => a.status === 'late').length;
-            const overtimeHours = overtimeHoursByEmployeeId?.[employee.id] ?? 0;
+            const presentDaysCount = attendance.filter(a => a.status === 'present').length;
+            const absentDaysCount = attendance.filter(a => a.status === 'absent').length;
+            const halfDaysCount = attendance.filter(a => a.status === 'half_day').length;
+            const leaveDaysCount = attendance.filter(a => a.status === 'leave').length;
+            const lateEntriesCount = attendance.filter(a => a.status === 'late').length;
+            const hasAttendanceRows = attendance.length > 0;
+            const payablePresentDays = hasAttendanceRows
+              ? presentDaysCount + leaveDaysCount
+              : totalDaysInSelectedMonth;
+            const absentDays = hasAttendanceRows ? absentDaysCount : 0;
+            const halfDays = hasAttendanceRows ? halfDaysCount : 0;
+            const leaveDays = hasAttendanceRows ? leaveDaysCount : 0;
+            const lateEntries = hasAttendanceRows ? lateEntriesCount : 0;
+            const overtimeHours = Math.max(0, Number(overtimeHoursByEmployeeId?.[employee.id] ?? 0));
+            const basicSalary = Math.max(0, Number(employee.basicSalary) || 0);
+            const overtimeRatePerHour = Math.max(0, Number(employee.overtimeRatePerHour) || 0);
 
             const calc = calculateSalary({
               month,
-              basicSalary: employee.basicSalary,
-              presentDays: presentDays + leaveDays,
+              basicSalary,
+              presentDays: payablePresentDays,
               absentDays,
               halfDays,
               lateEntries,
               overtimeHours,
-              overtimeRatePerHour: employee.overtimeRatePerHour,
+              overtimeRatePerHour,
               lateThreshold: payroll.lateThreshold,
               lateDeductionDays: payroll.lateDeductionDays,
             });
 
             const id = `${employee.id}_${month}`;
             const grossSalary = calc.netSalary;
-            const advanceDeduction = Math.max(0, advanceByEmployee.get(employee.id) ?? 0);
+            const totalAdvance = Math.max(0, advanceByEmployee.get(employee.id) ?? 0);
+            const advanceDeduction = Math.min(grossSalary, totalAdvance);
             const netSalary = Math.max(0, grossSalary - advanceDeduction);
             const salary: SalaryMonthly = {
               id,
@@ -489,7 +626,7 @@ export const hrmsApi = createApi({
               shopId,
               month,
               totalDaysInMonth: calc.totalDaysInMonth,
-              presentDays,
+              presentDays: payablePresentDays,
               absentDays,
               halfDays,
               leaveDays,
@@ -502,14 +639,14 @@ export const hrmsApi = createApi({
               grossSalary,
               advanceDeduction,
               netSalary,
-              generatedAt: nowIso(),
+              generatedAt,
             };
 
             batch.set(salaryCol(shopId).doc(id), salary, { merge: true });
             rows.push(salary);
           });
 
-          await batch.commit();
+          await withFirestoreRetry(async () => batch.commit());
           return { data: rows };
         } catch (error) {
           return { error: { message: (error as Error).message } };
@@ -521,13 +658,23 @@ export const hrmsApi = createApi({
     getEmployeeAdvances: builder.query<EmployeeAdvance[], { shopId: string; month: string }>({
       async queryFn({ shopId, month }) {
         try {
-          const snapshot = await advancesCol(shopId).where('month', '==', month).orderBy('paidAt', 'desc').get();
-          const data = snapshot.docs.map(doc =>
-            serialize<EmployeeAdvance>(doc.id, doc.data() as Omit<EmployeeAdvance, 'id'>),
-          );
+          if (!isValidMonthKey(month)) {
+            return { data: [] };
+          }
+          // Keep this query index-light. Some environments fail on where+orderBy composite indexes.
+          const snapshot = await withFirestoreRetry(async () => advancesCol(shopId).where('month', '==', month).get());
+          const data = snapshot.docs
+            .map(doc => serialize<EmployeeAdvance>(doc.id, doc.data() as Omit<EmployeeAdvance, 'id'>))
+            .sort((a, b) => {
+              const paidAtDiff = String(b.paidAt ?? '').localeCompare(String(a.paidAt ?? ''));
+              if (paidAtDiff !== 0) {
+                return paidAtDiff;
+              }
+              return String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? ''));
+            });
           return { data };
         } catch (error) {
-          return { error: { message: (error as Error).message } };
+          return { error: { message: toUserErrorMessage(error) } };
         }
       },
       providesTags: ['Advance'],
@@ -655,10 +802,13 @@ export const hrmsApi = createApi({
     getMonthlySalary: builder.query<SalaryMonthly[], { shopId: string; month: string }>({
       async queryFn({ shopId, month }) {
         try {
+          if (!isValidMonthKey(month)) {
+            return { data: [] };
+          }
           const snapshot = await salaryCol(shopId).where('month', '==', month).get();
-          const data = snapshot.docs.map(doc =>
-            serialize<SalaryMonthly>(doc.id, doc.data() as Omit<SalaryMonthly, 'id'>),
-          );
+          const data = snapshot.docs
+            .map(doc => serialize<SalaryMonthly>(doc.id, doc.data() as Omit<SalaryMonthly, 'id'>))
+            .sort((a, b) => a.employeeId.localeCompare(b.employeeId));
           return { data };
         } catch (error) {
           return { error: { message: (error as Error).message } };
@@ -670,13 +820,23 @@ export const hrmsApi = createApi({
     markSalaryPaid: builder.mutation<{ ok: true }, { shopId: string; salaryId: string; paidBy: string }>({
       async queryFn({ shopId, salaryId, paidBy }) {
         try {
-          await salaryCol(shopId).doc(salaryId).set(
-            {
+          const salaryRef = salaryCol(shopId).doc(salaryId);
+          const existing = await withFirestoreRetry(async () => salaryRef.get());
+          if (!existing.exists()) {
+            return { error: { message: 'Salary row not found.' } };
+          }
+          if (existing.data()?.salaryPaidAt) {
+            return { data: { ok: true } };
+          }
+          await withFirestoreRetry(async () => {
+            await salaryRef.set(
+              {
               salaryPaidAt: nowIso(),
               salaryPaidBy: paidBy,
-            },
-            { merge: true },
-          );
+              },
+              { merge: true },
+            );
+          });
           return { data: { ok: true } };
         } catch (error) {
           return { error: { message: (error as Error).message } };

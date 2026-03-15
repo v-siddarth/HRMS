@@ -575,9 +575,40 @@ function ActionButton({
       ]}
       onPress={onPress}
       disabled={disabled}>
-      <Text style={[styles.actionBtnText, strong ? styles.actionBtnTextStrong : undefined]}>{title}</Text>
+      <View style={styles.actionBtnInner}>
+        <View style={[styles.actionBtnIconWrap, strong ? styles.actionBtnIconWrapStrong : undefined]}>
+          <Text style={[styles.actionBtnIcon, strong ? styles.actionBtnIconStrong : undefined]}>{reportActionIcon(title)}</Text>
+        </View>
+        <Text style={[styles.actionBtnText, strong ? styles.actionBtnTextStrong : undefined]}>{title}</Text>
+      </View>
     </Pressable>
   );
+}
+
+function reportActionIcon(title: string) {
+  const lower = title.toLowerCase();
+  if (lower.includes('attendance')) {
+    return '◫';
+  }
+  if (lower.includes('salary')) {
+    return '₹';
+  }
+  if (lower.includes('staff')) {
+    return '⊚';
+  }
+  if (lower.includes('shift')) {
+    return '◷';
+  }
+  if (lower.includes('excel')) {
+    return '▤';
+  }
+  if (lower.includes('pdf')) {
+    return '◉';
+  }
+  if (lower.includes('advance')) {
+    return '↦';
+  }
+  return '◎';
 }
 
 function ReportTable({
@@ -590,33 +621,37 @@ function ReportTable({
   loading: boolean;
 }) {
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tableOuter}>
-      <View>
-        <View style={[styles.tableRow, styles.tableHeader]}>
-          {columns.map(column => (
-            <TableCell key={column.key} text={column.title} width={column.width} header />
-          ))}
-        </View>
-
-        {loading ? (
-          <View style={styles.tableLoadingWrap}>
-            <Text style={styles.tableLoadingText}>Loading...</Text>
-          </View>
-        ) : rows.length === 0 ? (
-          <View style={styles.tableLoadingWrap}>
-            <Text style={styles.tableLoadingText}>No data for selected filters.</Text>
-          </View>
-        ) : (
-          rows.slice(0, 400).map((row, idx) => (
-            <View key={`row-${idx}`} style={styles.tableRow}>
+    <View style={styles.tableFrame}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tableOuter} nestedScrollEnabled>
+        <ScrollView style={styles.tableVerticalScroll} nestedScrollEnabled>
+          <View>
+            <View style={[styles.tableRow, styles.tableHeader]}>
               {columns.map(column => (
-                <TableCell key={`${idx}-${column.key}`} text={row[column.key] ?? '-'} width={column.width} />
+                <TableCell key={column.key} text={column.title} width={column.width} header />
               ))}
             </View>
-          ))
-        )}
-      </View>
-    </ScrollView>
+
+            {loading ? (
+              <View style={styles.tableLoadingWrap}>
+                <Text style={styles.tableLoadingText}>Loading...</Text>
+              </View>
+            ) : rows.length === 0 ? (
+              <View style={styles.tableLoadingWrap}>
+                <Text style={styles.tableLoadingText}>No data for selected filters.</Text>
+              </View>
+            ) : (
+              rows.slice(0, 400).map((row, idx) => (
+                <View key={`row-${idx}`} style={styles.tableRow}>
+                  {columns.map(column => (
+                    <TableCell key={`${idx}-${column.key}`} text={row[column.key] ?? '-'} width={column.width} />
+                  ))}
+                </View>
+              ))
+            )}
+          </View>
+        </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
@@ -811,6 +846,17 @@ const styles = StyleSheet.create({
   },
   tableOuter: {
     paddingTop: 4,
+    minWidth: '100%',
+  },
+  tableFrame: {
+    borderWidth: 1,
+    borderColor: '#d8e2ed',
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+  },
+  tableVerticalScroll: {
+    maxHeight: 360,
   },
   tableRow: {
     flexDirection: 'row',
@@ -862,6 +908,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
+  },
+  actionBtnInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  actionBtnIconWrap: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#b7caec',
+    backgroundColor: '#dbe8fd',
+  },
+  actionBtnIconWrapStrong: {
+    borderColor: '#b7ead3',
+    backgroundColor: '#def4e9',
+  },
+  actionBtnIcon: {
+    color: '#1458bf',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  actionBtnIconStrong: {
+    color: '#0a7a5b',
   },
   actionBtnStrong: {
     backgroundColor: '#e8f9f1',

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
-import type { DrawerContentComponentProps } from '@react-navigation/drawer';
+import { DrawerContentScrollView, type DrawerContentComponentProps } from '@react-navigation/drawer';
 import { logout } from '../../services/authService';
 import { clearSession } from '../../store/authSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
@@ -38,7 +38,11 @@ export function ShopDrawerContent(props: DrawerContentComponentProps) {
   };
 
   return (
-    <View style={styles.container}>
+    <DrawerContentScrollView
+      {...props}
+      style={styles.container}
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={false}>
       <View style={styles.topBlock}>
         <Text style={styles.heading}>{shop?.shopName ?? 'Shop Panel'}</Text>
         <Text style={styles.subText}>{user?.email ?? 'Manager'}</Text>
@@ -101,13 +105,17 @@ export function ShopDrawerContent(props: DrawerContentComponentProps) {
           <Text style={[styles.menuText, styles.logoutText]}>Logout</Text>
         </Pressable>
       </View>
-    </View>
+    </DrawerContentScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 20,
     backgroundColor: colors.bg,
   },
   topBlock: {

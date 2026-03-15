@@ -25,16 +25,25 @@ export interface SalaryOutput {
 const round2 = (value: number) => Number(value.toFixed(2));
 
 export const calculateSalary = (input: SalaryInput): SalaryOutput => {
-  const totalDays = daysInMonth(input.month);
-  const perDay = input.basicSalary / totalDays;
-  const threshold = input.lateThreshold ?? 3;
-  const lateDeductionStep = input.lateDeductionDays ?? 0.5;
-  const lateDeductionDays = Math.floor(input.lateEntries / threshold) * lateDeductionStep;
+  const totalDays = Math.max(1, daysInMonth(input.month));
+  const basicSalary = Math.max(0, Number(input.basicSalary) || 0);
+  const presentDays = Math.max(0, Number(input.presentDays) || 0);
+  const lateEntries = Math.max(0, Number(input.lateEntries) || 0);
+  const halfDays = Math.max(0, Number(input.halfDays) || 0);
+  const overtimeRatePerHour = Math.max(0, Number(input.overtimeRatePerHour) || 0);
+  const overtimeHours = Math.max(0, Number(input.overtimeHours) || 0);
 
-  const payableDays =
-    input.presentDays + input.lateEntries + input.halfDays * 0.5 - input.absentDays - lateDeductionDays;
+  const perDay = basicSalary / totalDays;
+  const threshold = Math.max(1, Number(input.lateThreshold) || 3);
+  const lateDeductionStep = Math.max(0, Number(input.lateDeductionDays) || 0.5);
+  const lateDeductionDays = Math.floor(lateEntries / threshold) * lateDeductionStep;
 
-  const overtimeAmount = input.overtimeRatePerHour * input.overtimeHours;
+  // Paid days should come only from paid statuses.
+  // Absents are already excluded from paid statuses and should not be deducted again.
+  const payableDaysRaw = presentDays + lateEntries + halfDays * 0.5 - lateDeductionDays;
+  const payableDays = Math.max(0, Math.min(totalDays, payableDaysRaw));
+
+  const overtimeAmount = overtimeRatePerHour * overtimeHours;
   const netSalary = Math.max(0, payableDays * perDay + overtimeAmount);
 
   return {

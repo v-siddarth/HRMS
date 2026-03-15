@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Field, PrimaryButton } from '../../components/ui';
 import {
   isHardcodedAdminCredentials,
@@ -33,7 +33,7 @@ export function LoginScreen() {
 
       const user = await loginShopWithCredentials(email, password);
       if (!user) {
-        Alert.alert('Login failed', 'Invalid shop username/email or password, or shop is inactive.');
+        Alert.alert('Login failed', 'Invalid shop email or password, or shop is inactive.');
         return;
       }
 
@@ -46,10 +46,16 @@ export function LoginScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 14 : 0}>
       <View style={styles.bgBlobTop} />
       <View style={styles.bgBlobBottom} />
-      <View style={styles.centerWrap}>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.centerWrap}
+        showsVerticalScrollIndicator={false}>
         <View style={styles.card}>
           <View style={styles.headerWrap}>
             <Text style={styles.welcome}>WELCOME TO</Text>
@@ -57,14 +63,14 @@ export function LoginScreen() {
             <Text style={styles.appName}>RVM Attend</Text>
             <Text style={styles.subtitle}>Admin Log In</Text>
           </View>
-          <Field label="Email / Username" placeholder="Enter your email or username" value={email} onChangeText={setEmail} />
+          <Field label="Shop Email" placeholder="Enter your shop email" value={email} onChangeText={setEmail} />
           <Field label="Password" placeholder="Enter your password" value={password} onChangeText={setPassword} secureTextEntry />
           <PrimaryButton title="Sign In" onPress={onLogin} loading={loading} />
           <View style={styles.poweredWrap}>
             <Text style={styles.poweredText}>Powered by RVM Attend</Text>
           </View>
         </View>
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -77,21 +83,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   centerWrap: {
+    flexGrow: 1,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 28,
   },
   card: {
     width: '100%',
     maxWidth: 420,
-    borderRadius: 20,
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#dbe5f2',
+    borderColor: colors.border,
     backgroundColor: colors.surface,
-    padding: 20,
+    padding: 22,
     gap: 14,
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.12,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.14,
     shadowOffset: { width: 0, height: 12 },
     shadowRadius: 24,
     elevation: 8,

@@ -52,7 +52,16 @@ function ShopManagerNavigator() {
         headerTitleStyle: { fontWeight: '800' },
         headerLeft: () => null,
         headerRight: () => (
-          <Pressable onPress={() => navigation.openDrawer()} style={[styles.menuButton, styles.shopMenuButton]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open menu"
+            onPress={() => navigation.openDrawer()}
+            style={({ pressed }) => [
+              styles.menuButton,
+              styles.shopMenuButton,
+              pressed && styles.menuButtonPressed,
+              pressed && styles.shopMenuButtonPressed,
+            ]}>
             <Text style={styles.menuText}>☰</Text>
           </Pressable>
         ),
@@ -128,12 +137,18 @@ const styles = StyleSheet.create({
   menuButton: {
     marginRight: 12,
     backgroundColor: '#2f6ec6',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 8,
+  },
+  menuButtonPressed: {
+    backgroundColor: '#2759a0',
   },
   shopMenuButton: {
     backgroundColor: '#0f9672',
+  },
+  shopMenuButtonPressed: {
+    backgroundColor: '#0c7d5f',
   },
   menuText: {
     color: '#fff',

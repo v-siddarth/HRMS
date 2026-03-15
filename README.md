@@ -198,3 +198,58 @@ Missing in app.
 we wanna all reports in App like a tabale view and if its to long use scrolling for that and also we wanna export report option and its download the report directly in PDF format but like a EXECEL and also we wanna table view like a excel 
 
 now i give you some referace screenshot for the UI anylize it properly and impliment it into the applicion but keep in mind its only the refrace so make UI very proper and enhanced and very butifull and professional in the world think like a proper senior professional UI designer and senior professinoal Application developer and also i add some instructions related to the refrance UI also anylize that and do this changes in the shop user properly after that i will cheak it and also do this changes one by one make proper stratergy for that after one compliction i cheak and then we will go for the next make this solution powerfull robust and eficient with peroduction level and ready code do this with no mistake and eror free bug free output take your proper time and do that if you need to do any terminal task tell me i will do that and avoid the unwanted testing and make it powerfull
+
+
+Use this exact flow for your project.
+
+1. Install prerequisites (once):
+- Java 17
+- Android SDK + platform/build-tools
+- Node 20+
+- Run: `npm install`
+
+2. Build testing APK (debug):
+```bash
+cd /Users/samgadge/Desktop/HRMS/android
+./gradlew assembleDebug
+```
+APK output:
+`/Users/samgadge/Desktop/HRMS/android/app/build/outputs/apk/debug/app-debug.apk`
+
+3. Build client APK (signed release):
+- Create keystore (one time):
+```bash
+keytool -genkeypair -v \
+  -keystore hrms-release-key.keystore \
+  -alias hrms-key-alias \
+  -keyalg RSA \
+  -keysize 2048 \
+  -validity 10000
+```
+- Move it to:
+`/Users/samgadge/Desktop/HRMS/android/app/hrms-release-key.keystore`
+- Add to `~/.gradle/gradle.properties`:
+```properties
+MYAPP_UPLOAD_STORE_FILE=hrms-release-key.keystore
+MYAPP_UPLOAD_KEY_ALIAS=hrms-key-alias
+MYAPP_UPLOAD_STORE_PASSWORD=YOUR_STORE_PASSWORD
+MYAPP_UPLOAD_KEY_PASSWORD=YOUR_KEY_PASSWORD
+```
+- Build release:
+```bash
+cd /Users/samgadge/Desktop/HRMS/android
+./gradlew clean
+./gradlew assembleRelease
+```
+Release APK output:
+`/Users/samgadge/Desktop/HRMS/android/app/build/outputs/apk/release/app-release.apk`
+
+4. Optional Play Store bundle:
+```bash
+cd /Users/samgadge/Desktop/HRMS/android
+./gradlew bundleRelease
+```
+AAB output:
+`/Users/samgadge/Desktop/HRMS/android/app/build/outputs/bundle/release/app-release.aab`
+
+You can also follow the repo guide: [APK_BUILD.md](/Users/samgadge/Desktop/HRMS/docs/APK_BUILD.md).
