@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import type { AdminTabParamList } from '../../types/navigation';
 import { AdminDashboardScreen } from './AdminDashboardScreen';
-import { ShopsScreen } from './ShopsScreen';
+import { AdminShopsStack } from './AdminShopsStack';
 import { AdminProfileScreen } from './AdminProfileScreen';
 import { AdminStatusScreen } from './AdminStatusScreen';
 import { colors } from '../../theme/colors';
@@ -34,7 +34,7 @@ export function AdminHomeTabs() {
         },
       })}>
       <Tabs.Screen name="Home" component={AdminDashboardScreen} />
-      <Tabs.Screen name="Shops" component={ShopsScreen} />
+      <Tabs.Screen name="Shops" component={AdminShopsStack} />
       <Tabs.Screen name="Status" component={AdminStatusScreen} />
       <Tabs.Screen name="Profile" component={AdminProfileScreen} />
     </Tabs.Navigator>

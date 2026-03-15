@@ -18,20 +18,17 @@
 - `shops/{shopId}/settings/payroll`
 
 ## Manager Account Flow
-Manager account provisioning is done via Firebase Admin SDK script.
+Manager account provisioning is created directly from admin app flow (no Cloud Functions required).
 
 ### Shop Provisioning (Production Safe)
 1. Create/update shop in admin app.  
    - For new shops, set `Initial Login Password` (min 6 chars).
-2. Run auth sync:
-   ```bash
-   npm run auth:sync-shop-claims
-   ```
-3. Run audit:
+2. App directly creates Firebase Auth user and stores `authUid` in shop document.
+3. Verify `authProvisionStatus` is `provisioned` in `shops/{shopId}` and login works.
+4. Run audit when needed:
    ```bash
    npm run auth:audit-shop-claims
    ```
-4. Verify `authProvisionStatus` is `provisioned` in `shops/{shopId}` and login works.
 5. Shop managers must login using **shop email + password** (username login is not enabled in app auth flow).
 
 ### Why this is required
@@ -46,7 +43,6 @@ Manager account provisioning is done via Firebase Admin SDK script.
 - `authLastSyncedAt`
 - `authLastError`
 
-`auth:sync-shop-claims` clears `bootstrapPassword` and legacy `password` by default after successful provisioning.
 
 ## Build
 ```bash

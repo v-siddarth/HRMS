@@ -13,43 +13,52 @@ service cloud.firestore {
       return signedIn() && request.auth.token.role == 'shop_manager' && request.auth.token.shopId == shopId;
     }
 
+    function isShopOwnerDoc() {
+      return signedIn() && resource != null && resource.data.authUid == request.auth.uid;
+    }
+
+    function isShopOwner(shopId) {
+      return signedIn() && get(/databases/$(database)/documents/shops/$(shopId)).data.authUid == request.auth.uid;
+    }
+
     match /admins/{uid} {
       allow read, write: if isAdmin();
     }
 
     match /shops/{shopId} {
-      allow read, write: if isAdmin() || isShopManager(shopId);
+      allow read: if isAdmin() || isShopManager(shopId) || isShopOwnerDoc() || isShopOwner(shopId);
+      allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
 
       match /managers/{uid} {
-        allow read, write: if isAdmin() || isShopManager(shopId);
+        allow read, write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /employees/{employeeId} {
-        allow read, write: if isAdmin() || isShopManager(shopId);
+        allow read, write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /attendance/{attendanceId} {
-        allow read, write: if isAdmin() || isShopManager(shopId);
+        allow read, write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /salary/{salaryId} {
-        allow read, write: if isAdmin() || isShopManager(shopId);
+        allow read, write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /advances/{advanceId} {
-        allow read, write: if isAdmin() || isShopManager(shopId);
+        allow read, write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /shifts/{shiftId} {
-        allow read, write: if isAdmin() || isShopManager(shopId);
+        allow read, write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /weekly_shift_plans/{planId} {
-        allow read, write: if isAdmin() || isShopManager(shopId);
+        allow read, write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /settings/{settingId} {
-        allow read, write: if isAdmin() || isShopManager(shopId);
+        allow read, write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
     }
   }

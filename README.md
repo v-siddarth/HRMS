@@ -253,3 +253,10 @@ AAB output:
 `/Users/samgadge/Desktop/HRMS/android/app/build/outputs/bundle/release/app-release.aab`
 
 You can also follow the repo guide: [APK_BUILD.md](/Users/samgadge/Desktop/HRMS/docs/APK_BUILD.md).
+
+
+we have some bugs and errors and soem atrations in the porject i tell you one by one and yo udo that bug fixing and changes eficiently and properly and make this applition to production level and avoid testing commands first anylize the bug properly sometime i make mistake in explining the bug anylize that bug propelry and give me the soluton on that and give me professional solution on that 
+we wanna do some change in the admin user in the admin
+1 in the home page its shows the total employee count remove that count and add something static content like rules and all 
+2 in the shop section we need to create shop there and also able to see the shop and option to  creta new shop there we wanna crete shop form on the new page and also the update shop form in the new screen 
+3 the shop card remove login user and UID and also make this card more proper like a card

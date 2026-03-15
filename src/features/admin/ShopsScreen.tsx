@@ -1,43 +1,19 @@
 import React, { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Card, Field, PrimaryButton, Screen } from '../../components/ui';
-import { useDeleteShopMutation, useGetShopsQuery, useUpsertShopMutation } from '../../store/hrmsApi';
-import { useAppSelector } from '../../store/hooks';
-import type { ShopStatus } from '../../types/models';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Card, Field, Screen } from '../../components/ui';
+import { useDeleteShopMutation, useGetShopsQuery } from '../../store/hrmsApi';
+import type { AdminShopsStackParamList } from '../../types/navigation';
 import { colors } from '../../theme/colors';
+import { formatDisplayDate } from '../../utils/date';
 import { logError, logInfo } from '../../utils/logger';
 
-interface ShopForm {
-  id?: string;
-  shopName: string;
-  address: string;
-  ownerName: string;
-  contactNumber: string;
-  email: string;
-  username: string;
-  bootstrapPassword: string;
-  status: ShopStatus;
-}
-
-const initialForm: ShopForm = {
-  shopName: '',
-  address: '',
-  ownerName: '',
-  contactNumber: '',
-  email: '',
-  username: '',
-  bootstrapPassword: '',
-  status: 'active',
-};
-
 export function ShopsScreen() {
-  const authUser = useAppSelector(state => state.auth.user);
+  const navigation = useNavigation<NativeStackNavigationProp<AdminShopsStackParamList, 'ShopsList'>>();
   const [query, setQuery] = useState('');
-  const [form, setForm] = useState<ShopForm>(initialForm);
-  const [showForm, setShowForm] = useState(false);
 
   const { data: shops = [], isLoading } = useGetShopsQuery();
-  const [upsertShop, { isLoading: saving }] = useUpsertShopMutation();
   const [deleteShop] = useDeleteShopMutation();
 
   const filtered = useMemo(() => {
@@ -49,100 +25,10 @@ export function ShopsScreen() {
       s =>
         s.shopName.toLowerCase().includes(q) ||
         s.ownerName.toLowerCase().includes(q) ||
-        s.contactNumber.toLowerCase().includes(q),
+        s.contactNumber.toLowerCase().includes(q) ||
+        s.email.toLowerCase().includes(q),
     );
   }, [query, shops]);
-
-  const resetForm = () => setForm(initialForm);
-
-  const openNewForm = () => {
-    resetForm();
-    setShowForm(true);
-  };
-
-  const save = async () => {
-    if (!authUser || authUser.role !== 'super_admin') {
-      Alert.alert('Permission', 'Only super admin can manage shops.');
-      return;
-    }
-
-    const trimmed = {
-      shopName: form.shopName.trim(),
-      address: form.address.trim(),
-      ownerName: form.ownerName.trim(),
-      contactNumber: form.contactNumber.trim(),
-      email: form.email.trim(),
-      username: form.username.trim(),
-      bootstrapPassword: form.bootstrapPassword.trim(),
-    };
-
-    if (!trimmed.shopName || !trimmed.ownerName || !trimmed.contactNumber || !trimmed.email || !trimmed.username) {
-      Alert.alert('Validation', 'Please fill all required shop details.');
-      return;
-    }
-    if (!form.id && trimmed.bootstrapPassword.length < 6) {
-      Alert.alert('Validation', 'Initial login password is required and must be at least 6 characters.');
-      return;
-    }
-
-    try {
-      const payload = {
-        id: form.id,
-        shopName: trimmed.shopName,
-        address: trimmed.address,
-        ownerName: trimmed.ownerName,
-        contactNumber: trimmed.contactNumber,
-        email: trimmed.email,
-        username: trimmed.username,
-        status: form.status,
-        createdByAdminUid: authUser.uid,
-      };
-
-      const upsertPayload =
-        !form.id || trimmed.bootstrapPassword
-          ? { ...payload, bootstrapPassword: trimmed.bootstrapPassword }
-          : payload;
-
-      logInfo('ADMIN_SHOP_SAVE_ATTEMPT', {
-        mode: form.id ? 'update' : 'create',
-        username: trimmed.username,
-        email: trimmed.email.toLowerCase(),
-      });
-
-      await upsertShop(upsertPayload).unwrap();
-
-      Alert.alert(
-        'Success',
-        form.id
-          ? 'Shop updated successfully.'
-          : 'Shop created. Authentication provisioning is pending until auth sync runs.',
-      );
-      resetForm();
-      setShowForm(false);
-    } catch (error) {
-      const errorRef = logError('ADMIN_SHOP_SAVE_FAILED', error, {
-        mode: form.id ? 'update' : 'create',
-        username: trimmed.username,
-        email: trimmed.email.toLowerCase(),
-      });
-      Alert.alert('Failed', `${(error as Error).message}\nRef: ${errorRef}`);
-    }
-  };
-
-  const onEdit = (item: (typeof shops)[number]) => {
-    setForm({
-      id: item.id,
-      shopName: item.shopName,
-      address: item.address,
-      ownerName: item.ownerName,
-      contactNumber: item.contactNumber,
-      email: item.email,
-      username: item.username,
-      bootstrapPassword: '',
-      status: item.status,
-    });
-    setShowForm(true);
-  };
 
   const onDelete = (shopId: string) => {
     Alert.alert('Delete Shop', 'Are you sure?', [
@@ -171,10 +57,12 @@ export function ShopsScreen() {
           <View style={styles.headerTopRow}>
             <View style={styles.headerTextBlock}>
               <Text style={styles.title}>Shops</Text>
-              <Text style={styles.subtitle}>Production-ready shop management with fast search and actions.</Text>
+              <Text style={styles.subtitle}>Manage shop records with dedicated create and update workflows.</Text>
             </View>
-            <Pressable style={({ pressed }) => [styles.newButton, pressed && styles.newButtonPressed]} onPress={openNewForm}>
-              <Text style={styles.newButtonText}>+ New</Text>
+            <Pressable
+              style={({ pressed }) => [styles.newButton, pressed && styles.newButtonPressed]}
+              onPress={() => navigation.navigate('CreateShop')}>
+              <Text style={styles.newButtonText}>+ New Shop</Text>
             </Pressable>
           </View>
           <View style={styles.headerMetaRow}>
@@ -194,7 +82,7 @@ export function ShopsScreen() {
         </View>
 
         <Card>
-          <Field label="Search Shops" value={query} onChangeText={setQuery} placeholder="Shop name / owner / contact" />
+          <Field label="Search Shops" value={query} onChangeText={setQuery} placeholder="Shop name / owner / contact / email" />
           {!!query.trim() && (
             <Pressable style={styles.clearSearchBtn} onPress={() => setQuery('')}>
               <Text style={styles.clearSearchText}>Clear Search</Text>
@@ -202,57 +90,15 @@ export function ShopsScreen() {
           )}
         </Card>
 
-        {showForm && (
-          <Card>
-            <View style={styles.formHeader}>
-              <Text style={styles.sectionTitle}>{form.id ? 'Update Shop' : 'Create New Shop'}</Text>
-              <Pressable
-                style={styles.closeBtn}
-                onPress={() => {
-                  resetForm();
-                  setShowForm(false);
-                }}>
-                <Text style={styles.closeText}>Close</Text>
-              </Pressable>
-            </View>
-            <Text style={styles.formSubTitle}>Fill all required details to keep records consistent and secure.</Text>
-            <Field label="Shop Name" value={form.shopName} onChangeText={v => setForm(prev => ({ ...prev, shopName: v }))} />
-            <Field label="Shop Address" value={form.address} onChangeText={v => setForm(prev => ({ ...prev, address: v }))} />
-            <Field label="Owner Name" value={form.ownerName} onChangeText={v => setForm(prev => ({ ...prev, ownerName: v }))} />
-            <Field
-              label="Contact Number"
-              keyboardType="phone-pad"
-              value={form.contactNumber}
-              onChangeText={v => setForm(prev => ({ ...prev, contactNumber: v }))}
-            />
-            <Field label="Email" value={form.email} onChangeText={v => setForm(prev => ({ ...prev, email: v }))} />
-            <Field label="Shop Username" value={form.username} onChangeText={v => setForm(prev => ({ ...prev, username: v }))} />
-            <Field
-              label="Initial Login Password"
-              value={form.bootstrapPassword}
-              secureTextEntry
-              onChangeText={v => setForm(prev => ({ ...prev, bootstrapPassword: v }))}
-              placeholder={form.id ? 'Leave blank to keep current auth password' : 'At least 6 characters'}
-            />
-
-            <View style={styles.buttonRow}>
-              <View style={styles.flex1}>
-                <PrimaryButton title={form.id ? 'Update Shop' : 'Create Shop'} onPress={save} loading={saving} />
-              </View>
-              <Pressable style={({ pressed }) => [styles.resetButton, pressed && styles.resetButtonPressed]} onPress={resetForm}>
-                <Text style={styles.resetText}>Reset</Text>
-              </Pressable>
-            </View>
-          </Card>
-        )}
-
         <Text style={styles.listTitle}>{isLoading ? 'Loading shops...' : `${filtered.length} shops`}</Text>
 
         {filtered.length === 0 ? (
           <View style={styles.emptyWrap}>
             <Text style={styles.emptyTitle}>No Shops Found</Text>
             <Text style={styles.emptySub}>Try a different search query or create a new shop.</Text>
-            <Pressable style={({ pressed }) => [styles.newInlineBtn, pressed && styles.newButtonPressed]} onPress={openNewForm}>
+            <Pressable
+              style={({ pressed }) => [styles.newInlineBtn, pressed && styles.newButtonPressed]}
+              onPress={() => navigation.navigate('CreateShop')}>
               <Text style={styles.newButtonText}>+ Create New Shop</Text>
             </Pressable>
           </View>
@@ -261,28 +107,38 @@ export function ShopsScreen() {
             {filtered.map(item => (
               <View key={item.id} style={styles.shopCard}>
                 <View style={styles.shopCardTop}>
-                  <Text style={styles.shopName} numberOfLines={2} ellipsizeMode="tail">
-                    {item.shopName}
-                  </Text>
+                  <View style={styles.shopIdentityBlock}>
+                    <Text style={styles.shopName} numberOfLines={1} ellipsizeMode="tail">
+                      {item.shopName}
+                    </Text>
+                    <Text style={styles.shopAddress} numberOfLines={1} ellipsizeMode="tail">
+                      {item.address || 'Address not set'}
+                    </Text>
+                  </View>
                   <View style={[styles.badge, item.status === 'active' ? styles.badgeActive : styles.badgeInactive]}>
                     <Text style={[styles.badgeText, item.status === 'active' ? styles.badgeTextActive : styles.badgeTextInactive]}>
                       {item.status.toUpperCase()}
                     </Text>
                   </View>
                 </View>
-                <View style={styles.shopInfoBlock}>
-                  <InfoRow label="Owner" value={item.ownerName} />
-                  <InfoRow label="Contact" value={item.contactNumber} />
-                  <InfoRow label="Email" value={item.email} />
-                  <InfoRow label="Username" value={item.username} />
-                  <InfoRow label="Auth" value={(item.authProvisionStatus ?? 'pending').toUpperCase()} />
-                  <InfoRow label="Auth UID" value={item.authUid || '-'} />
-                  <InfoRow label="Auth Error" value={item.authLastError || '-'} multiline />
-                  <InfoRow label="Address" value={item.address || '-'} multiline />
+
+                <View style={styles.summaryGrid}>
+                  <SummaryTile label="Owner" value={item.ownerName} />
+                  <SummaryTile label="Contact" value={item.contactNumber} />
+                  <SummaryTile label="Email" value={item.email} />
+                  <SummaryTile label="Username" value={item.username} />
                 </View>
+
+                <View style={styles.footerMetaRow}>
+                  <Text style={styles.footerMetaText}>Created: {formatDisplayDate(item.createdAt)}</Text>
+                  <Text style={styles.footerMetaText}>Updated: {formatDisplayDate(item.updatedAt)}</Text>
+                </View>
+
                 <View style={styles.actionRow}>
-                  <Pressable style={({ pressed }) => [styles.editBtn, pressed && styles.editBtnPressed]} onPress={() => onEdit(item)}>
-                    <Text style={styles.editTxt}>Edit Shop</Text>
+                  <Pressable
+                    style={({ pressed }) => [styles.editBtn, pressed && styles.editBtnPressed]}
+                    onPress={() => navigation.navigate('EditShop', { shopId: item.id })}>
+                    <Text style={styles.editTxt}>Update Shop</Text>
                   </Pressable>
                   <Pressable
                     style={({ pressed }) => [styles.deleteBtn, pressed && styles.deleteBtnPressed]}
@@ -299,22 +155,22 @@ export function ShopsScreen() {
   );
 }
 
-function InfoRow({ label, value, multiline }: { label: string; value: string; multiline?: boolean }) {
+function SummaryTile({ label, value }: { label: string; value: string }) {
   return (
-    <View style={styles.infoRow}>
-      <Text style={styles.infoLabel}>{label}</Text>
-      <Text
-        style={styles.infoValue}
-        numberOfLines={multiline ? 3 : 1}
-        ellipsizeMode="tail"
-        selectable={false}>
-        {value}
+    <View style={styles.summaryTile}>
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <Text style={styles.summaryValue} numberOfLines={1} ellipsizeMode="tail">
+        {value || '-'}
       </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  pageContent: {
+    gap: 12,
+    paddingBottom: 50,
+  },
   headerWrap: {
     gap: 10,
     borderRadius: 18,
@@ -354,6 +210,22 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     lineHeight: 19,
   },
+  newButton: {
+    backgroundColor: colors.primary,
+    minHeight: 42,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  newButtonPressed: {
+    backgroundColor: colors.primaryPressed,
+  },
+  newButtonText: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 14,
+  },
   headerMetaRow: {
     flexDirection: 'row',
     gap: 8,
@@ -379,22 +251,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
   },
-  newButton: {
-    backgroundColor: colors.primary,
-    minHeight: 42,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  newButtonPressed: {
-    backgroundColor: colors.primaryPressed,
-  },
-  newButtonText: {
-    color: '#fff',
-    fontWeight: '800',
-    fontSize: 14,
-  },
   clearSearchBtn: {
     marginTop: 2,
     alignSelf: 'flex-start',
@@ -410,61 +266,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 12,
   },
-  formHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 2,
-  },
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  formSubTitle: {
-    color: colors.textSecondary,
-    fontWeight: '500',
-    lineHeight: 19,
-    marginBottom: 4,
-  },
-  closeBtn: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  closeText: {
-    color: colors.textSecondary,
-    fontWeight: '700',
-  },
-  buttonRow: {
-    marginTop: 4,
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-  },
-  flex1: {
-    flex: 1,
-  },
-  resetButton: {
-    minHeight: 46,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-    backgroundColor: '#fff',
-  },
-  resetButtonPressed: {
-    backgroundColor: '#f4f7fb',
-  },
-  resetText: {
-    color: colors.textSecondary,
-    fontWeight: '700',
-  },
   listTitle: {
     color: colors.textPrimary,
     fontWeight: '700',
@@ -474,36 +275,38 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingBottom: 40,
   },
-  pageContent: {
-    gap: 12,
-    paddingBottom: 50,
-  },
   shopCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: '#d7dee8',
-    padding: 12,
-    gap: 10,
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.1,
-    shadowOffset: { width: 0, height: 6 },
-    shadowRadius: 12,
+    padding: 14,
+    gap: 12,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 14,
     elevation: 3,
   },
   shopCardTop: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
+    alignItems: 'center',
+  },
+  shopIdentityBlock: {
+    flex: 1,
+    gap: 2,
   },
   shopName: {
-    flex: 1,
     color: colors.textPrimary,
     fontWeight: '800',
-    fontSize: 18,
-    paddingRight: 4,
-    lineHeight: 24,
+    fontSize: 20,
+  },
+  shopAddress: {
+    color: colors.textSecondary,
+    fontWeight: '500',
+    lineHeight: 18,
   },
   badge: {
     borderRadius: 999,
@@ -529,35 +332,45 @@ const styles = StyleSheet.create({
   badgeTextInactive: {
     color: '#c22a2a',
   },
-  shopInfoBlock: {
-    backgroundColor: '#f8fafc',
+  summaryGrid: {
+    gap: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  summaryTile: {
+    width: '48.6%',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#e6ebf2',
+    backgroundColor: '#f8fafc',
     paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 8,
+    paddingVertical: 9,
+    gap: 4,
+    minHeight: 62,
   },
-  infoRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  infoLabel: {
-    width: 76,
+  summaryLabel: {
     color: colors.textMuted,
+    fontSize: 11,
     fontWeight: '700',
-    fontSize: 12,
-    paddingTop: 2,
   },
-  infoValue: {
-    flex: 1,
+  summaryValue: {
     color: colors.textPrimary,
     fontWeight: '700',
     fontSize: 13,
-    lineHeight: 18,
-    textAlign: 'right',
+  },
+  footerMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e6ebf2',
+    paddingTop: 10,
+  },
+  footerMetaText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
   },
   actionRow: {
     flexDirection: 'row',
@@ -565,26 +378,24 @@ const styles = StyleSheet.create({
   },
   editBtn: {
     flex: 1,
-    minHeight: 44,
-    borderRadius: 10,
+    minHeight: 45,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.primarySoft,
-    borderWidth: 1,
-    borderColor: '#c8daf7',
+    backgroundColor: colors.primary,
   },
   editBtnPressed: {
-    backgroundColor: '#d1e3ff',
+    backgroundColor: colors.primaryPressed,
   },
   editTxt: {
-    color: colors.primary,
+    color: '#ffffff',
     fontWeight: '800',
   },
   deleteBtn: {
-    minHeight: 44,
-    minWidth: 96,
+    minHeight: 45,
+    minWidth: 100,
     paddingHorizontal: 12,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#fdeeee',

@@ -9,6 +9,12 @@ export type AdminTabParamList = {
   Profile: undefined;
 };
 
+export type AdminShopsStackParamList = {
+  ShopsList: undefined;
+  CreateShop: undefined;
+  EditShop: { shopId: string };
+};
+
 export type AdminDrawerParamList = {
   AdminHome: undefined;
   AdminProfile: undefined;

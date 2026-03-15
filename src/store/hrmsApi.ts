@@ -30,10 +30,12 @@ import {
 import { calculateSalary } from '../utils/salary';
 import { currentMonth, daysInMonth, monthDateRange, todayDate } from '../utils/date';
 import { logError, logInfo } from '../utils/logger';
+import { createShopAuthUser } from '../services/authService';
 
 interface FirestoreError {
   message: string;
 }
+
 
 type ShopInput = {
   id?: string;
@@ -176,6 +178,14 @@ const getErrorMessage = (error: unknown) => {
     if (typeof maybeMessage === 'string') {
       return maybeMessage;
     }
+    const maybeCode = (error as { code?: unknown }).code;
+    if (typeof maybeCode === 'string') {
+      return maybeCode;
+    }
+    const maybeDetails = (error as { details?: unknown }).details;
+    if (typeof maybeDetails === 'string') {
+      return maybeDetails;
+    }
   }
   return 'Unknown error';
 };
@@ -188,6 +198,11 @@ const isTransientFirestoreError = (error: unknown) => {
     message.includes('deadline') ||
     message.includes('network')
   );
+};
+
+const isPermissionDeniedError = (error: unknown) => {
+  const message = getErrorMessage(error).toLowerCase();
+  return message.includes('permission-denied') || message.includes('permission denied');
 };
 
 const toUserErrorMessage = (error: unknown) => {
@@ -254,6 +269,8 @@ async function withFirestoreRetry<T>(operation: () => Promise<T>) {
 export const hrmsApi = createApi({
   reducerPath: 'hrmsApi',
   baseQuery: fakeBaseQuery<FirestoreError>(),
+  refetchOnFocus: true,
+  refetchOnReconnect: true,
   tagTypes: ['Shops', 'Employees', 'Attendance', 'Salary', 'Dashboard', 'Reports', 'Settings', 'Biometric', 'Advance'],
   endpoints: builder => ({
     getShops: builder.query<Shop[], void>({
@@ -265,6 +282,35 @@ export const hrmsApi = createApi({
         } catch (error) {
           return { error: { message: (error as Error).message } };
         }
+      },
+      async onCacheEntryAdded(_arg, { cacheDataLoaded, cacheEntryRemoved, updateCachedData }) {
+        try {
+          await cacheDataLoaded;
+        } catch {
+          // Continue: listener can still recover cache when Firestore becomes reachable.
+        }
+        const unsubscribe = shopsCol()
+          .orderBy('createdAt', 'desc')
+          .onSnapshot(
+            snapshot => {
+              if (!snapshot || !Array.isArray(snapshot.docs)) {
+                return;
+              }
+              const data = snapshot.docs.map(doc => serialize<Shop>(doc.id, doc.data() as Omit<Shop, 'id'>));
+              updateCachedData(() => data);
+            },
+            error => {
+              if (isPermissionDeniedError(error)) {
+                logInfo('SHOPS_LISTENER_PERMISSION_DENIED', {
+                  note: 'Ignored during auth role/session transition.',
+                });
+                return;
+              }
+              logError('SHOPS_LISTENER_FAILED', error);
+            },
+          );
+        await cacheEntryRemoved;
+        unsubscribe();
       },
       providesTags: ['Shops'],
     }),
@@ -307,13 +353,11 @@ export const hrmsApi = createApi({
             return { error: { message: 'Initial login password must be at least 6 characters.' } };
           }
 
-          const authStatus =
-            rest.authProvisionStatus ??
-            (rest.status === 'inactive'
-              ? existingData.authProvisionStatus ?? 'pending'
-              : rest.authUid || existingData.authUid
-                ? existingData.authProvisionStatus ?? 'provisioned'
-                : 'pending');
+          let createdAuthUid = '';
+          if (isCreate) {
+            const createdUser = await createShopAuthUser(normalizedEmail, incomingSecret);
+            createdAuthUid = createdUser.uid;
+          }
 
           const payload: Shop = {
             id,
@@ -325,25 +369,17 @@ export const hrmsApi = createApi({
             createdByAdminUid: rest.createdByAdminUid,
             username: normalizedUsername,
             email: normalizedEmail,
-            authUid: rest.authUid ?? existingData.authUid,
-            authProvisionStatus: authStatus,
-            authProvisionedAt: rest.authProvisionedAt ?? existingData.authProvisionedAt,
-            authLastSyncedAt: rest.authLastSyncedAt ?? existingData.authLastSyncedAt,
-            authLastError: rest.authLastError ?? existingData.authLastError,
+            authUid: createdAuthUid || rest.authUid || existingData.authUid,
             createdAt: existing.exists() ? (existing.data()?.createdAt ?? now) : now,
             updatedAt: now,
           };
 
-          if (hasBootstrap) {
+          if (!isCreate && hasBootstrap) {
             payload.bootstrapPassword = incomingSecret;
-            payload.authProvisionStatus = 'pending';
-            payload.authLastError = '';
           } else if (emailChanged) {
-            payload.authProvisionStatus = 'pending';
-            payload.authLastError = '';
+            // No auth status transitions; auth UID remains linked to created user.
           } else if (hasLegacyPassword) {
             payload.password = incomingSecret;
-            payload.authProvisionStatus = payload.authProvisionStatus ?? 'pending';
           } else if (existingData.bootstrapPassword) {
             payload.bootstrapPassword = existingData.bootstrapPassword;
           } else if (existingData.password) {
@@ -394,6 +430,19 @@ export const hrmsApi = createApi({
           return { error: { message: (error as Error).message } };
         }
       },
+      async onCacheEntryAdded(shopId, { cacheDataLoaded, cacheEntryRemoved, updateCachedData }) {
+        try {
+          await cacheDataLoaded;
+        } catch {
+          // Continue: listener can still recover cache when Firestore becomes reachable.
+        }
+        const unsubscribe = shopDoc(shopId).onSnapshot(snapshot => {
+          const data = snapshot.exists() ? serialize<Shop>(snapshot.id, snapshot.data() as Omit<Shop, 'id'>) : null;
+          updateCachedData(() => data);
+        });
+        await cacheEntryRemoved;
+        unsubscribe();
+      },
       providesTags: ['Shops'],
     }),
 
@@ -420,6 +469,23 @@ export const hrmsApi = createApi({
         } catch (error) {
           return { error: { message: (error as Error).message } };
         }
+      },
+      async onCacheEntryAdded(shopId, { cacheDataLoaded, cacheEntryRemoved, updateCachedData }) {
+        try {
+          await cacheDataLoaded;
+        } catch {
+          // Continue: listener can still recover cache when Firestore becomes reachable.
+        }
+        const unsubscribe = employeesCol(shopId)
+          .orderBy('createdAt', 'desc')
+          .onSnapshot(snapshot => {
+            const data = snapshot.docs.map(doc =>
+              serialize<Employee>(doc.id, doc.data() as Omit<Employee, 'id'>),
+            );
+            updateCachedData(() => data);
+          });
+        await cacheEntryRemoved;
+        unsubscribe();
       },
       providesTags: ['Employees'],
     }),
@@ -473,6 +539,23 @@ export const hrmsApi = createApi({
         } catch (error) {
           return { error: { message: (error as Error).message } };
         }
+      },
+      async onCacheEntryAdded({ shopId, date }, { cacheDataLoaded, cacheEntryRemoved, updateCachedData }) {
+        try {
+          await cacheDataLoaded;
+        } catch {
+          // Continue: listener can still recover cache when Firestore becomes reachable.
+        }
+        const unsubscribe = attendanceCol(shopId)
+          .where('date', '==', date)
+          .onSnapshot(snapshot => {
+            const data = snapshot.docs.map(doc =>
+              serialize<AttendanceRecord>(doc.id, doc.data() as Omit<AttendanceRecord, 'id'>),
+            );
+            updateCachedData(() => data);
+          });
+        await cacheEntryRemoved;
+        unsubscribe();
       },
       providesTags: ['Attendance'],
     }),
@@ -677,6 +760,32 @@ export const hrmsApi = createApi({
           return { error: { message: toUserErrorMessage(error) } };
         }
       },
+      async onCacheEntryAdded({ shopId, month }, { cacheDataLoaded, cacheEntryRemoved, updateCachedData }) {
+        if (!isValidMonthKey(month)) {
+          return;
+        }
+        try {
+          await cacheDataLoaded;
+        } catch {
+          // Continue: listener can still recover cache when Firestore becomes reachable.
+        }
+        const unsubscribe = advancesCol(shopId)
+          .where('month', '==', month)
+          .onSnapshot(snapshot => {
+            const data = snapshot.docs
+              .map(doc => serialize<EmployeeAdvance>(doc.id, doc.data() as Omit<EmployeeAdvance, 'id'>))
+              .sort((a, b) => {
+                const paidAtDiff = String(b.paidAt ?? '').localeCompare(String(a.paidAt ?? ''));
+                if (paidAtDiff !== 0) {
+                  return paidAtDiff;
+                }
+                return String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? ''));
+              });
+            updateCachedData(() => data);
+          });
+        await cacheEntryRemoved;
+        unsubscribe();
+      },
       providesTags: ['Advance'],
     }),
 
@@ -732,6 +841,21 @@ export const hrmsApi = createApi({
           }
         }
       },
+      async onCacheEntryAdded(shopId, { cacheDataLoaded, cacheEntryRemoved, updateCachedData }) {
+        try {
+          await cacheDataLoaded;
+        } catch {
+          // Continue: listener can still recover cache when Firestore becomes reachable.
+        }
+        const unsubscribe = shiftsCol(shopId).onSnapshot(snapshot => {
+          const data = snapshot.docs
+            .map(doc => serialize<ShiftMaster>(doc.id, doc.data() as Omit<ShiftMaster, 'id'>))
+            .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+          updateCachedData(() => data);
+        });
+        await cacheEntryRemoved;
+        unsubscribe();
+      },
       providesTags: ['Settings'],
     }),
 
@@ -770,6 +894,23 @@ export const hrmsApi = createApi({
         } catch (error) {
           return { error: { message: (error as Error).message } };
         }
+      },
+      async onCacheEntryAdded({ shopId, weekStartDate }, { cacheDataLoaded, cacheEntryRemoved, updateCachedData }) {
+        try {
+          await cacheDataLoaded;
+        } catch {
+          // Continue: listener can still recover cache when Firestore becomes reachable.
+        }
+        const unsubscribe = weeklyShiftPlansCol(shopId)
+          .where('weekStartDate', '==', weekStartDate)
+          .onSnapshot(snapshot => {
+            const data = snapshot.docs.map(doc =>
+              serialize<WeeklyShiftPlan>(doc.id, doc.data() as Omit<WeeklyShiftPlan, 'id'>),
+            );
+            updateCachedData(() => data);
+          });
+        await cacheEntryRemoved;
+        unsubscribe();
       },
       providesTags: ['Settings'],
     }),
@@ -813,6 +954,26 @@ export const hrmsApi = createApi({
         } catch (error) {
           return { error: { message: (error as Error).message } };
         }
+      },
+      async onCacheEntryAdded({ shopId, month }, { cacheDataLoaded, cacheEntryRemoved, updateCachedData }) {
+        if (!isValidMonthKey(month)) {
+          return;
+        }
+        try {
+          await cacheDataLoaded;
+        } catch {
+          // Continue: listener can still recover cache when Firestore becomes reachable.
+        }
+        const unsubscribe = salaryCol(shopId)
+          .where('month', '==', month)
+          .onSnapshot(snapshot => {
+            const data = snapshot.docs
+              .map(doc => serialize<SalaryMonthly>(doc.id, doc.data() as Omit<SalaryMonthly, 'id'>))
+              .sort((a, b) => a.employeeId.localeCompare(b.employeeId));
+            updateCachedData(() => data);
+          });
+        await cacheEntryRemoved;
+        unsubscribe();
       },
       providesTags: ['Salary'],
     }),
@@ -1177,6 +1338,23 @@ export const hrmsApi = createApi({
           return { error: { message: (error as Error).message } };
         }
       },
+      async onCacheEntryAdded(shopId, { cacheDataLoaded, cacheEntryRemoved, updateCachedData }) {
+        try {
+          await cacheDataLoaded;
+        } catch {
+          // Continue: listener can still recover cache when Firestore becomes reachable.
+        }
+        const unsubscribe = payrollSettingsDoc(shopId).onSnapshot(snapshot => {
+          const data = (snapshot.data() as PayrollSettings | undefined) ?? {
+            lateThreshold: 3,
+            lateDeductionDays: 0.5,
+            timezone: 'Asia/Kolkata',
+          };
+          updateCachedData(() => data);
+        });
+        await cacheEntryRemoved;
+        unsubscribe();
+      },
       providesTags: ['Settings'],
     }),
 
@@ -1195,6 +1373,25 @@ export const hrmsApi = createApi({
         } catch (error) {
           return { error: { message: (error as Error).message } };
         }
+      },
+      async onCacheEntryAdded(shopId, { cacheDataLoaded, cacheEntryRemoved, updateCachedData }) {
+        try {
+          await cacheDataLoaded;
+        } catch {
+          // Continue: listener can still recover cache when Firestore becomes reachable.
+        }
+        const unsubscribe = biometricSettingsDoc(shopId).onSnapshot(snapshot => {
+          const data = (snapshot.data() as BiometricSettings | undefined) ?? {
+            enabled: false,
+            deviceName: '',
+            deviceId: '',
+            syncWindowMinutes: 5,
+            integrationMode: 'pull_agent',
+          };
+          updateCachedData(() => data);
+        });
+        await cacheEntryRemoved;
+        unsubscribe();
       },
       providesTags: ['Biometric'],
     }),

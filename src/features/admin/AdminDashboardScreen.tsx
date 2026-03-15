@@ -23,7 +23,14 @@ export function AdminDashboardScreen() {
           <MetricCard title="Total Shops" value={isLoading ? '...' : String(data?.totalShops ?? 0)} tone="blue" />
           <MetricCard title="Active Shops" value={isLoading ? '...' : String(data?.activeShops ?? 0)} tone="green" />
           <MetricCard title="Inactive Shops" value={isLoading ? '...' : String(data?.inactiveShops ?? 0)} tone="red" />
-          <MetricCard title="Total Employees" value={isLoading ? '...' : String(data?.totalEmployees ?? 0)} tone="slate" />
+        </View>
+
+        <View style={styles.rulesCard}>
+          <Text style={styles.rulesTitle}>Admin Rules & Operational Standards</Text>
+          <RuleRow text="Create shops only with verified owner name, contact number, and official email." />
+          <RuleRow text="Keep inactive shops reviewed monthly and disable access immediately when needed." />
+          <RuleRow text="Never share credentials in chat; reset credentials only via secure admin workflow." />
+          <RuleRow text="Update shop contact details within 24 hours to keep payroll and attendance communication reliable." />
         </View>
       </ScrollView>
     </Screen>
@@ -57,6 +64,15 @@ function MetricCard({
     <View style={[styles.metricCard, { backgroundColor: bgByTone[tone] }]}>
       <Text style={styles.metricLabel}>{title}</Text>
       <Text style={[styles.metricValue, { color: textByTone[tone] }]}>{value}</Text>
+    </View>
+  );
+}
+
+function RuleRow({ text }: { text: string }) {
+  return (
+    <View style={styles.ruleRow}>
+      <View style={styles.ruleDot} />
+      <Text style={styles.ruleText}>{text}</Text>
     </View>
   );
 }
@@ -139,5 +155,42 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 28,
     textAlign: 'center',
+  },
+  rulesCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+    gap: 10,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.06,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  rulesTitle: {
+    color: colors.textPrimary,
+    fontWeight: '800',
+    fontSize: 16,
+    marginBottom: 2,
+  },
+  ruleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 9,
+  },
+  ruleDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: colors.primary,
+    marginTop: 6,
+  },
+  ruleText: {
+    flex: 1,
+    color: colors.textSecondary,
+    lineHeight: 20,
+    fontWeight: '600',
   },
 });
