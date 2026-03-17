@@ -1,3 +1,5 @@
+import app from '@react-native-firebase/app';
+import type { FirebaseFirestoreTypes } from '@react-native-firebase/firestore';
 import { createApi, fakeBaseQuery } from '@reduxjs/toolkit/query/react';
 import dayjs from 'dayjs';
 import type {
@@ -15,6 +17,7 @@ import type {
 } from '../types/models';
 import {
   attendanceCol,
+  auth,
   advancesCol,
   biometricSettingsDoc,
   employeesCol,
@@ -30,11 +33,26 @@ import {
 import { calculateSalary } from '../utils/salary';
 import { currentMonth, daysInMonth, monthDateRange, todayDate } from '../utils/date';
 import { logError, logInfo } from '../utils/logger';
-import { createShopAuthUser } from '../services/authService';
+import {
+  createShopAuthUser,
+  getDeletedShopAuthHint,
+} from '../services/authService';
 
 interface FirestoreError {
   message: string;
 }
+
+const FUNCTIONS_REGION = 'us-central1';
+const SHOP_CHILD_COLLECTIONS = [
+  'managers',
+  'employees',
+  'attendance',
+  'salary',
+  'advances',
+  'shifts',
+  'weekly_shift_plans',
+  'settings',
+] as const;
 
 
 type ShopInput = {
@@ -236,6 +254,24 @@ const omitUndefinedDeep = <T>(value: T): T => {
 };
 
 const isValidMonthKey = (value: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
+const normalizeEmail = (value: string) => value.trim().toLowerCase();
+
+async function deleteCollectionBatchedClient(collectionRef: FirebaseFirestoreTypes.CollectionReference, batchSize = 250) {
+  while (true) {
+    const snapshot = await collectionRef.limit(batchSize).get();
+    if (snapshot.empty) {
+      break;
+    }
+    const batch = firestore().batch();
+    snapshot.docs.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+    await batch.commit();
+    if (snapshot.size < batchSize) {
+      break;
+    }
+  }
+}
 
 async function withFirestoreRetry<T>(operation: () => Promise<T>) {
   const retryDelaysMs = [0, 500, 1200, 2200];
@@ -355,8 +391,26 @@ export const hrmsApi = createApi({
 
           let createdAuthUid = '';
           if (isCreate) {
-            const createdUser = await createShopAuthUser(normalizedEmail, incomingSecret);
-            createdAuthUid = createdUser.uid;
+            try {
+              const createdUser = await createShopAuthUser(normalizedEmail, incomingSecret);
+              createdAuthUid = createdUser.uid;
+            } catch (error) {
+              const message = String((error as { message?: string }).message ?? '').toLowerCase();
+              const isEmailExists = message.includes('already exists in firebase auth');
+              if (!isEmailExists) {
+                throw error;
+              }
+
+              const hintedUid = await getDeletedShopAuthHint(normalizedEmail);
+              if (!hintedUid) {
+                throw error;
+              }
+              createdAuthUid = hintedUid;
+              logInfo('SHOP_UPSERT_REUSED_AUTH_UID_FROM_HINT', {
+                email: normalizedEmail,
+                uid: hintedUid,
+              });
+            }
           }
 
           const payload: Shop = {
@@ -418,6 +472,184 @@ export const hrmsApi = createApi({
       invalidatesTags: ['Shops', 'Dashboard'],
     }),
 
+    updateShopSelfServiceProfile: builder.mutation<
+      Shop,
+      {
+        shopId: string;
+        shopName: string;
+        ownerName: string;
+        contactNumber: string;
+        address: string;
+        email: string;
+        currentPassword?: string;
+      }
+    >({
+      async queryFn(input) {
+        try {
+          const docRef = shopDoc(input.shopId);
+          const snap = await docRef.get();
+          if (!snap.exists()) {
+            return { error: { message: 'Shop profile not found.' } };
+          }
+          const existing = serialize<Shop>(snap.id, snap.data() as Omit<Shop, 'id'>);
+          if (existing.status !== 'active') {
+            return { error: { message: 'Only active shops can update profile.' } };
+          }
+
+          const currentAuthUser = auth().currentUser;
+          if (!currentAuthUser?.uid) {
+            return { error: { message: 'Session expired. Please login again.' } };
+          }
+          if (existing.authUid && existing.authUid !== currentAuthUser.uid) {
+            return { error: { message: 'Signed-in account is not linked to this shop.' } };
+          }
+
+          const normalizedNextEmail = normalizeEmail(input.email);
+          if (!normalizedNextEmail || !normalizedNextEmail.includes('@')) {
+            return { error: { message: 'Valid email is required.' } };
+          }
+          const existingEmail = normalizeEmail(existing.email);
+          const emailChanged = existingEmail !== normalizedNextEmail;
+
+          if (emailChanged) {
+            const emailSnap = await shopsCol().where('email', '==', normalizedNextEmail).limit(1).get();
+            const emailConflict = emailSnap.docs.find(doc => doc.id !== existing.id);
+            if (emailConflict) {
+              return { error: { message: 'Shop email already exists.' } };
+            }
+            if (!input.currentPassword?.trim()) {
+              return { error: { message: 'Current password is required to change login email.' } };
+            }
+            await auth().signInWithEmailAndPassword(existingEmail, input.currentPassword.trim());
+            await auth().currentUser?.updateEmail(normalizedNextEmail);
+          }
+
+          const payload: Shop = {
+            ...existing,
+            shopName: String(input.shopName ?? '').trim(),
+            ownerName: String(input.ownerName ?? '').trim(),
+            contactNumber: String(input.contactNumber ?? '').trim(),
+            address: String(input.address ?? '').trim(),
+            email: normalizedNextEmail,
+            updatedAt: nowIso(),
+          };
+
+          try {
+            await docRef.set(omitUndefinedDeep(payload), { merge: true });
+          } catch (writeError) {
+            if (emailChanged) {
+              try {
+                await auth().currentUser?.updateEmail(existingEmail);
+              } catch {
+                // best effort rollback when Firestore write fails after auth email update
+              }
+            }
+            throw writeError;
+          }
+          return { data: payload };
+        } catch (error) {
+          const message = getErrorMessage(error).toLowerCase();
+          if (message.includes('auth/invalid-credential') || message.includes('auth/wrong-password')) {
+            return { error: { message: 'Current password is incorrect.' } };
+          }
+          if (message.includes('auth/requires-recent-login')) {
+            return { error: { message: 'For security, re-login and try profile update again.' } };
+          }
+          if (message.includes('auth/email-already-in-use')) {
+            return { error: { message: 'This email is already used by another auth account.' } };
+          }
+          return { error: { message: toUserErrorMessage(error) } };
+        }
+      },
+      invalidatesTags: ['Shops'],
+    }),
+
+    changeShopManagerPassword: builder.mutation<{ ok: true }, { currentPassword: string; newPassword: string }>({
+      async queryFn(input) {
+        try {
+          const currentPassword = input.currentPassword.trim();
+          const nextPassword = input.newPassword.trim();
+          if (!currentPassword || !nextPassword) {
+            return { error: { message: 'Current and new password are required.' } };
+          }
+          if (nextPassword.length < 6) {
+            return { error: { message: 'New password must be at least 6 characters.' } };
+          }
+          if (currentPassword === nextPassword) {
+            return { error: { message: 'New password must be different from current password.' } };
+          }
+
+          const currentUser = auth().currentUser;
+          const currentEmail = normalizeEmail(currentUser?.email ?? '');
+          if (!currentUser || !currentEmail) {
+            return { error: { message: 'Session expired. Please login again.' } };
+          }
+
+          await auth().signInWithEmailAndPassword(currentEmail, currentPassword);
+          await auth().currentUser?.updatePassword(nextPassword);
+          return { data: { ok: true } };
+        } catch (error) {
+          const message = getErrorMessage(error).toLowerCase();
+          if (message.includes('auth/invalid-credential') || message.includes('auth/wrong-password')) {
+            return { error: { message: 'Current password is incorrect.' } };
+          }
+          if (message.includes('auth/weak-password')) {
+            return { error: { message: 'New password is too weak. Use at least 6 characters.' } };
+          }
+          if (message.includes('auth/requires-recent-login')) {
+            return { error: { message: 'For security, re-login and then change password.' } };
+          }
+          return { error: { message: toUserErrorMessage(error) } };
+        }
+      },
+    }),
+
+    deleteShopManagerAccount: builder.mutation<{ ok: true }, { shopId: string; currentPassword: string }>({
+      async queryFn({ shopId, currentPassword }) {
+        try {
+          const currentUser = auth().currentUser;
+          const currentEmail = normalizeEmail(currentUser?.email ?? '');
+          if (!currentUser || !currentEmail) {
+            return { error: { message: 'Session expired. Please login again.' } };
+          }
+          const secret = currentPassword.trim();
+          if (!secret) {
+            return { error: { message: 'Current password is required to delete account.' } };
+          }
+
+          const shopRef = shopDoc(shopId);
+          const shopSnap = await shopRef.get();
+          if (!shopSnap.exists()) {
+            return { error: { message: 'Shop account not found.' } };
+          }
+          const shop = serialize<Shop>(shopSnap.id, shopSnap.data() as Omit<Shop, 'id'>);
+          if (shop.authUid && shop.authUid !== currentUser.uid) {
+            return { error: { message: 'Signed-in account is not linked to this shop.' } };
+          }
+
+          await auth().signInWithEmailAndPassword(currentEmail, secret);
+
+          for (const collectionName of SHOP_CHILD_COLLECTIONS) {
+            await deleteCollectionBatchedClient(shopRef.collection(collectionName));
+          }
+          await shopRef.delete();
+
+          await auth().currentUser?.delete();
+          return { data: { ok: true } };
+        } catch (error) {
+          const message = getErrorMessage(error).toLowerCase();
+          if (message.includes('auth/invalid-credential') || message.includes('auth/wrong-password')) {
+            return { error: { message: 'Current password is incorrect.' } };
+          }
+          if (message.includes('auth/requires-recent-login')) {
+            return { error: { message: 'For security, re-login and retry account deletion.' } };
+          }
+          return { error: { message: toUserErrorMessage(error) } };
+        }
+      },
+      invalidatesTags: ['Shops', 'Employees', 'Attendance', 'Salary', 'Dashboard', 'Reports', 'Settings', 'Biometric', 'Advance'],
+    }),
+
     getShopById: builder.query<Shop | null, string>({
       async queryFn(shopId) {
         try {
@@ -449,10 +681,36 @@ export const hrmsApi = createApi({
     deleteShop: builder.mutation<{ ok: true }, string>({
       async queryFn(shopId) {
         try {
-          await shopDoc(shopId).delete();
+          const projectId = app.app().options.projectId;
+          const token = await auth().currentUser?.getIdToken();
+          if (!projectId || !token) {
+            return { error: { message: 'Admin session missing. Please re-login and retry.' } };
+          }
+
+          const endpoint = `https://${FUNCTIONS_REGION}-${projectId}.cloudfunctions.net/deleteShopByAdmin`;
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ shopId }),
+          });
+
+          const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+          if (!response.ok || !payload.ok) {
+            const detail = payload?.message ? `: ${payload.message}` : '';
+            return {
+              error: {
+                message: `Delete endpoint failed${detail}. Ensure Firebase Functions is deployed and project is on Blaze plan.`,
+              },
+            };
+          }
+
+          logInfo('SHOP_DELETE_COMPLETED_VIA_ADMIN_ENDPOINT', { shopId });
           return { data: { ok: true } };
         } catch (error) {
-          return { error: { message: (error as Error).message } };
+          return { error: { message: toUserErrorMessage(error) } };
         }
       },
       invalidatesTags: ['Shops', 'Dashboard'],
@@ -1425,6 +1683,9 @@ export const hrmsApi = createApi({
 export const {
   useGetShopsQuery,
   useUpsertShopMutation,
+  useUpdateShopSelfServiceProfileMutation,
+  useChangeShopManagerPasswordMutation,
+  useDeleteShopManagerAccountMutation,
   useGetShopByIdQuery,
   useDeleteShopMutation,
   useGetEmployeesQuery,

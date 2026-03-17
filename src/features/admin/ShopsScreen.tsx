@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Card, Field, Screen } from '../../components/ui';
@@ -10,8 +10,10 @@ import { formatDisplayDate } from '../../utils/date';
 import { logError, logInfo } from '../../utils/logger';
 
 export function ShopsScreen() {
+  const { width } = useWindowDimensions();
   const navigation = useNavigation<NativeStackNavigationProp<AdminShopsStackParamList, 'ShopsList'>>();
   const [query, setQuery] = useState('');
+  const compactLayout = width < 380;
 
   const { data: shops = [], isLoading } = useGetShopsQuery();
   const [deleteShop] = useDeleteShopMutation();
@@ -54,13 +56,13 @@ export function ShopsScreen() {
       <ScrollView contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
         <View style={styles.headerWrap}>
           <View style={styles.heroGlow} />
-          <View style={styles.headerTopRow}>
+          <View style={[styles.headerTopRow, compactLayout && styles.headerTopRowCompact]}>
             <View style={styles.headerTextBlock}>
               <Text style={styles.title}>Shops</Text>
               <Text style={styles.subtitle}>Manage shop records with dedicated create and update workflows.</Text>
             </View>
             <Pressable
-              style={({ pressed }) => [styles.newButton, pressed && styles.newButtonPressed]}
+              style={({ pressed }) => [styles.newButton, compactLayout && styles.newButtonCompact, pressed && styles.newButtonPressed]}
               onPress={() => navigation.navigate('CreateShop')}>
               <Text style={styles.newButtonText}>+ New Shop</Text>
             </Pressable>
@@ -123,10 +125,10 @@ export function ShopsScreen() {
                 </View>
 
                 <View style={styles.summaryGrid}>
-                  <SummaryTile label="Owner" value={item.ownerName} />
-                  <SummaryTile label="Contact" value={item.contactNumber} />
-                  <SummaryTile label="Email" value={item.email} />
-                  <SummaryTile label="Username" value={item.username} />
+                  <SummaryTile label="Owner" value={item.ownerName} fullWidth={compactLayout} />
+                  <SummaryTile label="Contact" value={item.contactNumber} fullWidth={compactLayout} />
+                  <SummaryTile label="Email" value={item.email} fullWidth={compactLayout} />
+                  <SummaryTile label="Username" value={item.username} fullWidth={compactLayout} />
                 </View>
 
                 <View style={styles.footerMetaRow}>
@@ -134,14 +136,14 @@ export function ShopsScreen() {
                   <Text style={styles.footerMetaText}>Updated: {formatDisplayDate(item.updatedAt)}</Text>
                 </View>
 
-                <View style={styles.actionRow}>
+                <View style={[styles.actionRow, compactLayout && styles.actionRowCompact]}>
                   <Pressable
-                    style={({ pressed }) => [styles.editBtn, pressed && styles.editBtnPressed]}
+                    style={({ pressed }) => [styles.editBtn, compactLayout && styles.actionBtnCompact, pressed && styles.editBtnPressed]}
                     onPress={() => navigation.navigate('EditShop', { shopId: item.id })}>
                     <Text style={styles.editTxt}>Update Shop</Text>
                   </Pressable>
                   <Pressable
-                    style={({ pressed }) => [styles.deleteBtn, pressed && styles.deleteBtnPressed]}
+                    style={({ pressed }) => [styles.deleteBtn, compactLayout && styles.actionBtnCompact, pressed && styles.deleteBtnPressed]}
                     onPress={() => onDelete(item.id)}>
                     <Text style={styles.deleteTxt}>Delete</Text>
                   </Pressable>
@@ -155,9 +157,9 @@ export function ShopsScreen() {
   );
 }
 
-function SummaryTile({ label, value }: { label: string; value: string }) {
+function SummaryTile({ label, value, fullWidth }: { label: string; value: string; fullWidth?: boolean }) {
   return (
-    <View style={styles.summaryTile}>
+    <View style={[styles.summaryTile, fullWidth && styles.summaryTileFull]}>
       <Text style={styles.summaryLabel}>{label}</Text>
       <Text style={styles.summaryValue} numberOfLines={1} ellipsizeMode="tail">
         {value || '-'}
@@ -196,6 +198,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12,
   },
+  headerTopRowCompact: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
   headerTextBlock: {
     flex: 1,
     gap: 4,
@@ -217,6 +223,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  newButtonCompact: {
+    width: '100%',
   },
   newButtonPressed: {
     backgroundColor: colors.primaryPressed,
@@ -349,6 +358,9 @@ const styles = StyleSheet.create({
     gap: 4,
     minHeight: 62,
   },
+  summaryTileFull: {
+    width: '100%',
+  },
   summaryLabel: {
     color: colors.textMuted,
     fontSize: 11,
@@ -375,6 +387,13 @@ const styles = StyleSheet.create({
   actionRow: {
     flexDirection: 'row',
     gap: 10,
+  },
+  actionRowCompact: {
+    flexDirection: 'column',
+  },
+  actionBtnCompact: {
+    width: '100%',
+    minWidth: 0,
   },
   editBtn: {
     flex: 1,

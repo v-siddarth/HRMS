@@ -93,7 +93,7 @@ export function ShopDrawerContent(props: DrawerContentComponentProps) {
           <Text style={styles.menuText}>Reports Center</Text>
         </Pressable>
         <Pressable style={styles.menuItem} onPress={() => props.navigation.navigate('ShopProfile')}>
-          <Text style={styles.menuText}>Shop Profile</Text>
+          <Text style={styles.menuText}>Profile</Text>
         </Pressable>
         <Pressable style={styles.menuItem} onPress={() => props.navigation.navigate('ShopSettings')}>
           <Text style={styles.menuText}>Settings</Text>

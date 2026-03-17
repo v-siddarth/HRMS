@@ -73,7 +73,7 @@ function ShopManagerNavigator() {
           headerShown: false,
         }}
       />
-      <ShopDrawer.Screen name="ShopProfile" component={ProfileScreen} options={{ title: 'Shop Profile' }} />
+      <ShopDrawer.Screen name="ShopProfile" component={ProfileScreen} options={{ title: 'Profile' }} />
       <ShopDrawer.Screen name="ShopSettings" component={ShopSettingsScreen} options={{ title: 'Settings' }} />
       <ShopDrawer.Screen name="ShopSupport" component={ShopSupportScreen} options={{ title: 'Support' }} />
     </ShopDrawer.Navigator>

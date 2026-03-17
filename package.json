@@ -9,7 +9,8 @@
     "start": "react-native start",
     "test": "jest",
     "auth:sync-shop-claims": "node scripts/sync-shop-manager-auth.js",
-    "auth:audit-shop-claims": "node scripts/audit-shop-auth-consistency.js"
+    "auth:audit-shop-claims": "node scripts/audit-shop-auth-consistency.js",
+    "auth:delete-shop-user": "node scripts/delete-shop-auth-user.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",

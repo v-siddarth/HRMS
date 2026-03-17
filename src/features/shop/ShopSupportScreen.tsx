@@ -24,7 +24,7 @@ export function ShopSupportScreen() {
           <Text style={styles.sectionTitle}>Security Controls</Text>
           <Text style={styles.note}>1. Do not share shop login credentials with unauthorized users.</Text>
           <Text style={styles.note}>2. Logout on shared or public devices after every session.</Text>
-          <Text style={styles.note}>3. Keep contact and owner details updated in Shop Profile.</Text>
+          <Text style={styles.note}>3. Keep contact and owner details updated in Profile.</Text>
         </Card>
 
         <Card>

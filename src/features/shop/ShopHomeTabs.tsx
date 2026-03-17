@@ -18,16 +18,18 @@ export function ShopHomeTabs() {
         headerShown: false,
         tabBarActiveTintColor: colors.success,
         tabBarInactiveTintColor: colors.textMuted,
+        tabBarHideOnKeyboard: true,
         tabBarLabelStyle: styles.tabLabel,
+        tabBarItemStyle: styles.tabItem,
         tabBarIcon: ({ color, focused }) => (
           <View style={[styles.iconBubble, focused && styles.iconBubbleActive]}>
             <Text style={[styles.iconText, { color }]}>{tabIcon(route.name)}</Text>
           </View>
         ),
         tabBarStyle: {
-          height: 76,
-          paddingTop: 8,
-          paddingBottom: 10,
+          height: 60,
+          paddingTop: 0,
+          paddingBottom: 0,
           borderTopWidth: 1,
           borderTopColor: '#d7dee8',
           backgroundColor: '#ffffff',
@@ -63,7 +65,11 @@ const styles = StyleSheet.create({
   tabLabel: {
     fontSize: 12,
     fontWeight: '700',
-    marginBottom: 2,
+    marginBottom: 0,
+  },
+  tabItem: {
+    paddingTop: 2,
+    paddingBottom: 3,
   },
   iconBubble: {
     width: 28,

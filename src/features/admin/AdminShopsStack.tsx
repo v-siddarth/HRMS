@@ -17,7 +17,7 @@ export function AdminShopsStack() {
         headerShadowVisible: false,
         contentStyle: { backgroundColor: colors.bg },
       }}>
-      <Stack.Screen name="ShopsList" component={ShopsScreen} options={{ title: 'Shops' }} />
+      <Stack.Screen name="ShopsList" component={ShopsScreen} options={{ headerShown: false }} />
       <Stack.Screen name="CreateShop" component={AdminShopFormScreen} options={{ title: 'Create Shop' }} />
       <Stack.Screen name="EditShop" component={AdminShopFormScreen} options={{ title: 'Update Shop' }} />
     </Stack.Navigator>
