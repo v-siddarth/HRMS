@@ -1,6 +1,8 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ShopTabParamList } from '../../types/navigation';
 import { ShopDashboardScreen } from './ShopDashboardScreen';
 import { StaffScreen } from './StaffScreen';
@@ -12,6 +14,9 @@ import { colors } from '../../theme/colors';
 const Tabs = createBottomTabNavigator<ShopTabParamList>();
 
 export function ShopHomeTabs() {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, 10);
+
   return (
     <Tabs.Navigator
       screenOptions={({ route }) => ({
@@ -21,18 +26,25 @@ export function ShopHomeTabs() {
         tabBarHideOnKeyboard: true,
         tabBarLabelStyle: styles.tabLabel,
         tabBarItemStyle: styles.tabItem,
-        tabBarIcon: ({ color, focused }) => (
-          <View style={[styles.iconBubble, focused && styles.iconBubbleActive]}>
-            <Text style={[styles.iconText, { color }]}>{tabIcon(route.name)}</Text>
-          </View>
-        ),
+        tabBarIcon: ({ color, focused, size }) => {
+          const icon = tabIcon(route.name);
+
+          return (
+            <Ionicons
+              name={icon.name}
+              size={focused ? size + 2 : size}
+              color={focused ? colors.success : color}
+              style={focused && styles.iconActive}
+            />
+          );
+        },
         tabBarStyle: {
-          height: 60,
-          paddingTop: 0,
-          paddingBottom: 0,
+          height: 58 + bottomInset,
+          paddingTop: 4,
+          paddingBottom: bottomInset,
           borderTopWidth: 1,
-          borderTopColor: '#d7dee8',
-          backgroundColor: '#ffffff',
+          borderTopColor: colors.border,
+          backgroundColor: colors.surface,
         },
       })}>
       <Tabs.Screen name="Home" component={ShopDashboardScreen} />
@@ -47,17 +59,29 @@ export function ShopHomeTabs() {
 function tabIcon(routeName: keyof ShopTabParamList) {
   switch (routeName) {
     case 'Home':
-      return '⌂';
+      return {
+        name: 'home',
+      };
     case 'Staff':
-      return '◫';
+      return {
+        name: 'people',
+      };
     case 'Attendance':
-      return '◍';
+      return {
+        name: 'calendar',
+      };
     case 'Salary':
-      return '◎';
+      return {
+        name: 'wallet',
+      };
     case 'Reports':
-      return '▤';
+      return {
+        name: 'document-text',
+      };
     default:
-      return '?';
+      return {
+        name: 'circle-outline',
+      };
   }
 }
 
@@ -65,26 +89,13 @@ const styles = StyleSheet.create({
   tabLabel: {
     fontSize: 12,
     fontWeight: '700',
-    marginBottom: 0,
+    marginBottom: 2,
   },
   tabItem: {
-    paddingTop: 2,
-    paddingBottom: 3,
+    paddingTop: 4,
+    paddingBottom: 4,
   },
-  iconBubble: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#eef2f7',
-  },
-  iconBubbleActive: {
-    backgroundColor: '#ddf3ea',
-  },
-  iconText: {
-    fontSize: 14,
-    fontWeight: '700',
-    lineHeight: 16,
+  iconActive: {
+    transform: [{ translateY: -1 }],
   },
 });

@@ -12,6 +12,7 @@ This repository is a role-based HRMS/attendance/payroll mobile application with:
 
 - `super_admin` flow for shop onboarding and management
 - `shop_manager` flow for daily shop operations
+- planned `staff` flow foundation now added in shared types/model design
 - Firebase Auth for login
 - Firestore for application data
 - Firebase Cloud Functions for privileged admin deletion flows
@@ -161,10 +162,11 @@ Admin SDK operational scripts:
 
 ## 5. Auth Model
 
-There are two roles:
+There are currently two fully implemented roles and one planned role foundation:
 
 - `super_admin`
 - `shop_manager`
+- `staff` (Phase 1 data-model foundation locked; screens/auth flow not implemented yet)
 
 ### Admin Login
 
@@ -222,6 +224,16 @@ Important employee fields already supported in the model:
 - `biometricRegisteredAt`
 - `activatedAt`
 - `deactivatedAt`
+
+Planned/now-typed employee auth fields for future staff login:
+
+- `loginEmail`
+- `authUid`
+- `authStatus`
+- `authProvisionedAt`
+- `authDisabledAt`
+- `lastLoginAt`
+- `authLastError`
 
 Important attendance fields already supported:
 
@@ -657,7 +669,7 @@ If you want to regain full context quickly, read in this order:
 You can paste the block below to quickly orient Codex:
 
 ```text
-This project is a React Native CLI HRMS app called RVM Attend. Use Node 20+, Java 17, Android SDK, Firebase Auth, Firestore, and Firebase Functions. The main business/data layer is src/store/hrmsApi.ts. Roles are super_admin and shop_manager. Shop-side features live in src/features/shop and already include staff CRUD, attendance regularization, salary generation, advances/loans, shifts, weekly planning, report tables, PDF export, and Excel export. The employee model already supports employeeCode, taluka, district, organization, Aadhaar, PF, biometricUserId, activatedAt, and deactivatedAt. Biometric hardware integration is not connected yet; only placeholders/settings exist. For Android, google-services.json is already in android/app. For iOS, GoogleService-Info.plist is likely missing. Avoid destructive git commands because the worktree may be dirty. Before changing behavior, check docs/PROJECT_HANDOFF.md, PLAN.md, src/types/models.ts, and src/store/hrmsApi.ts.
+This project is a React Native CLI HRMS app called RVM Attend. Use Node 20+, Java 17, Android SDK, Firebase Auth, Firestore, and Firebase Functions. The main business/data layer is src/store/hrmsApi.ts. Implemented roles are super_admin and shop_manager, and staff role foundation is now added in the shared model layer for upcoming work. Shop-side features live in src/features/shop and already include staff CRUD, attendance regularization, salary generation, advances/loans, shifts, weekly planning, report tables, PDF export, and Excel export. The employee model already supports employeeCode, taluka, district, organization, Aadhaar, PF, biometricUserId, activatedAt, deactivatedAt, and now planned auth-link fields for future staff login. Biometric hardware integration is not connected yet; only placeholders/settings exist. For Android, google-services.json is already in android/app. For iOS, GoogleService-Info.plist is likely missing. Avoid destructive git commands because the worktree may be dirty. Before changing behavior, check docs/PROJECT_HANDOFF.md, PLAN.md, src/types/models.ts, and src/store/hrmsApi.ts.
 ```
 
 ## 16. Recommended Start Sequence On The New Laptop
@@ -683,4 +695,3 @@ These are strong follow-up improvements for maintainability:
 - add focused tests for salary rules and auth flows
 - add real chart component for dashboard salary trend
 - formalize biometric sync architecture before hardware work starts
-

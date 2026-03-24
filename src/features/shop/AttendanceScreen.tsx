@@ -16,9 +16,11 @@ import { useFocusEffect } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import dayjs from 'dayjs';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import * as RNHTMLtoPDF from 'react-native-html-to-pdf';
 import Share from 'react-native-share';
-import { Card, Field, Screen } from '../../components/ui';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Card, Field } from '../../components/ui';
 import { useAppSelector } from '../../store/hooks';
 import {
   useGetAttendanceByDateQuery,
@@ -61,63 +63,95 @@ export function AttendanceScreen() {
 function AttendanceHomeScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const { data: shop } = useGetShopByIdQuery(shopId, { skip: !shopId });
+
+  const openDrawer = () => {
+    const parent = navigation.getParent?.()?.getParent?.();
+    if (parent?.openDrawer) {
+      parent.openDrawer();
+    }
+  };
 
   return (
     <View style={styles.page}>
-      <StatusBar backgroundColor="#0b8f6d" barStyle="light-content" />
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.banner}>
+        <View style={[styles.banner, { paddingTop: insets.top + 16 }]}>
           <View style={styles.headerGradientBase} />
-          <View style={styles.headerGradientMid} />
           <View style={styles.headerGradientGlowTop} />
           <View style={styles.headerGradientGlowBottom} />
-          <Text style={styles.bannerTitle} numberOfLines={1}>
-            {shop?.shopName ?? 'Attendance'}
-          </Text>
-          <Text style={styles.bannerSub} numberOfLines={2}>
-            {shop?.address ?? '-'}
-          </Text>
-          <Text style={styles.bannerSub}>Powered by RVM Attend</Text>
-          <View style={styles.bannerDivider} />
-          <Text style={styles.bannerSection}>Attendance Desk</Text>
+
+          <View style={styles.attendanceHeaderTopRow}>
+            <View style={styles.attendanceHeaderBadge}>
+              <Text style={styles.attendanceHeaderBadgeText}>Attendance Desk</Text>
+            </View>
+            <Pressable style={({ pressed }) => [styles.menuBtn, pressed && styles.menuBtnPressed]} onPress={openDrawer}>
+              <Ionicons name="menu" size={24} color="#ffffff" />
+            </Pressable>
+          </View>
+
+          <View style={styles.attendanceHeaderTextBlock}>
+            <Text style={styles.bannerTitle} numberOfLines={1}>
+              {shop?.shopName ?? 'Attendance'}
+            </Text>
+            <Text style={styles.bannerSub} numberOfLines={1}>
+              {shop?.address ?? 'Address not available'}
+            </Text>
+            <Text style={styles.bannerPowered}>Powered Nexora RVM Infotech</Text>
+          </View>
+
+          <View style={styles.attendanceSummaryCard}>
+            <Text style={styles.attendanceSummaryEyebrow}>Attendance Overview</Text>
+            <Text style={styles.attendanceSummaryTitle}>Daily attendance tools in one place</Text>
+            <Text style={styles.attendanceSummaryText}>
+              Manage biometric readiness, correct attendance records, and open staff reports from a simple screen.
+            </Text>
+            <View style={styles.attendanceSummaryPoints}>
+              <View style={styles.attendanceSummaryPoint}>
+                <Ionicons name="checkmark-circle-outline" size={16} color="#d6f8ed" />
+                <Text style={styles.attendanceSummaryPointText}>Use regularise for daily corrections.</Text>
+              </View>
+              <View style={styles.attendanceSummaryPoint}>
+                <Ionicons name="document-text-outline" size={16} color="#d6f8ed" />
+                <Text style={styles.attendanceSummaryPointText}>Open reports for staff-wise and full attendance review.</Text>
+              </View>
+            </View>
+          </View>
         </View>
 
-        <Card>
-          <Text style={styles.sectionTitle}>Attendance</Text>
-          <View style={styles.actionGrid}>
+        <View style={styles.bodyWrap}>
+          <View style={styles.attendanceActionGrid}>
             <ActionButton
-              icon="◉"
+              icon="finger-print-outline"
               tone="violet"
-              title="Staff Fingerprint"
+              title="Biometric Setup"
+              description="Review biometric device status and registration readiness."
               onPress={() => navigation.navigate('BiometricEnrollment')}
             />
             <ActionButton
-              icon="◫"
+              icon="calendar-clear-outline"
               tone="emerald"
               title="Attendance Regularise"
+              description="Update daily attendance records and correct manual entries."
               onPress={() => navigation.navigate('AttendanceRegularise')}
             />
-          </View>
-        </Card>
-
-        <Card>
-          <Text style={styles.sectionTitle}>Reports</Text>
-          <View style={styles.actionGrid}>
             <ActionButton
-              icon="▤"
+              icon="person-text-outline"
               tone="blue"
-              title="Staff Report"
+              title="Individual Report"
+              description="Generate attendance history for a selected staff member."
               onPress={() => navigation.navigate('IndividualAttendanceReport')}
             />
             <ActionButton
-              icon="▦"
+              icon="people-outline"
               tone="teal"
               title="All Staff Report"
+              description="Review and export attendance records for the full team."
               onPress={() => navigation.navigate('AllAttendanceReport')}
             />
           </View>
-        </Card>
+        </View>
       </ScrollView>
     </View>
   );
@@ -126,47 +160,64 @@ function AttendanceHomeScreen({ navigation }: { navigation: any }) {
 function BiometricEnrollmentScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const { data: biometric } = useGetBiometricSettingsQuery(shopId, { skip: !shopId });
 
   return (
-    <Screen>
-      <View style={styles.formHeader}>
-        <Text style={styles.formTitle}>Create New Staff Finger Print</Text>
-        <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
-          <Text style={styles.closeText}>Close</Text>
-        </Pressable>
-      </View>
-
-      <Card>
-        <Text style={styles.sectionTitle}>Biometric Integration</Text>
-        <Text style={styles.helperText}>
-          External device connectivity is intentionally empty for now. We will connect hardware integration in the next phase.
-        </Text>
-
-        <View style={styles.infoGrid}>
-          <InfoPill label="Enabled" value={biometric?.enabled ? 'Yes' : 'No'} />
-          <InfoPill label="Mode" value={biometric?.integrationMode ?? 'pull_agent'} />
-          <InfoPill label="Device" value={biometric?.deviceName || 'Not Connected'} />
-          <InfoPill label="Device ID" value={biometric?.deviceId || '-'} />
-          <InfoPill label="Last Sync" value={biometric?.lastSyncedAt || '-'} />
-          <InfoPill label="Status" value="Pending Connectivity" warning />
+    <View style={styles.page}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <ScrollView contentContainerStyle={[styles.innerContent, { paddingTop: Math.max(insets.top + 38, 66) }]} showsVerticalScrollIndicator={false}>
+        <View style={styles.staffFormHero}>
+          <View style={styles.staffFormHeroTop}>
+            <View style={styles.staffFormBadge}>
+              <Text style={styles.staffFormBadgeText}>Biometric Setup</Text>
+            </View>
+            <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.formTitle}>Staff Fingerprint Setup</Text>
+          <Text style={styles.staffFormIntro}>
+            Review biometric device status and keep attendance hardware information ready for future integration.
+          </Text>
         </View>
-      </Card>
 
-      <Card>
-        <Text style={styles.sectionTitle}>Notes</Text>
-        <Text style={styles.noteText}>1. New fingerprint registration flow will open after external device connection.</Text>
-        <Text style={styles.noteText}>2. Attendance regularise remains available for correction.</Text>
-        <Text style={styles.noteText}>3. Multi-hardware for different locations will be added in integration phase.</Text>
-        <Text style={styles.noteText}>4. Reports are available with date-duration filters.</Text>
-      </Card>
-    </Screen>
+        <Card>
+          <Text style={styles.sectionTitle}>Biometric Integration</Text>
+          <Text style={styles.helperText}>
+            External device connectivity is intentionally empty for now. We will connect hardware integration in the next phase.
+          </Text>
+
+          <View style={styles.infoGrid}>
+            <InfoPill label="Enabled" value={biometric?.enabled ? 'Yes' : 'No'} />
+            <InfoPill label="Mode" value={biometric?.integrationMode ?? 'pull_agent'} />
+            <InfoPill label="Device" value={biometric?.deviceName || 'Not Connected'} />
+            <InfoPill label="Device ID" value={biometric?.deviceId || '-'} />
+            <InfoPill label="Last Sync" value={biometric?.lastSyncedAt || '-'} />
+            <InfoPill label="Status" value="Pending Connectivity" warning />
+          </View>
+        </Card>
+
+        <Card>
+          <Text style={styles.sectionTitle}>Notes</Text>
+          <Text style={styles.noteText}>1. New fingerprint registration flow will open after external device connection.</Text>
+          <Text style={styles.noteText}>2. Attendance regularise remains available for correction.</Text>
+          <Text style={styles.noteText}>3. Multi-hardware for different locations will be added in integration phase.</Text>
+          <Text style={styles.noteText}>4. Reports are available with date-duration filters.</Text>
+        </Card>
+      </ScrollView>
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
+    </View>
   );
 }
 
 function AttendanceRegulariseScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const [date, setDate] = useState(todayDate());
   const [liveMode, setLiveMode] = useState(true);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -260,6 +311,21 @@ function AttendanceRegulariseScreen({ navigation }: { navigation: any }) {
     return counts;
   }, [activeEmployees, attendance, localStatusByEmployee]);
 
+  const trimmedQuery = query.trim();
+  const isSearchActive = trimmedQuery.length > 0;
+  const activeFilterCount = filter === 'all' ? activeEmployees.length : summary[filter];
+  const statusFilterOptions = useMemo(
+    () => [
+      { key: 'all' as const, label: 'All Staff', count: activeEmployees.length, accent: '#334155' },
+      { key: 'present' as const, label: 'Present', count: summary.present, accent: '#0f9f63' },
+      { key: 'absent' as const, label: 'Absent', count: summary.absent, accent: '#c22a2a' },
+      { key: 'late' as const, label: 'Late', count: summary.late, accent: '#ba7a1d' },
+      { key: 'half_day' as const, label: 'Half Day', count: summary.half_day, accent: '#475569' },
+      { key: 'leave' as const, label: 'Leave', count: summary.leave, accent: '#1458bf' },
+    ],
+    [activeEmployees.length, summary],
+  );
+
   const onDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
     if (Platform.OS === 'android') {
       setShowDatePicker(false);
@@ -318,21 +384,67 @@ function AttendanceRegulariseScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={styles.page}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       <FlatList
         data={rows}
         keyExtractor={item => item.employee.id}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.editListContent, { paddingTop: Math.max(insets.top + 38, 66) }]}
         ListHeaderComponent={
           <View style={styles.headerBlock}>
-            <View style={styles.formHeader}>
+            <View style={styles.staffFormHero}>
+              <View style={styles.staffFormHeroTop}>
+                <View style={styles.staffFormBadge}>
+                  <Text style={styles.staffFormBadgeText}>Attendance Update</Text>
+                </View>
+                <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+                  <Text style={styles.closeText}>Close</Text>
+                </Pressable>
+              </View>
               <Text style={styles.formTitle}>Attendance Regularise</Text>
-              <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
-                <Text style={styles.closeText}>Close</Text>
-              </Pressable>
+              <Text style={styles.staffFormIntro}>
+                Review daily attendance, switch date when needed, and update each staff record with the correct status.
+              </Text>
+              <View style={styles.regulariseHeroStatsGrid}>
+                <View style={styles.regulariseHeroStatCard}>
+                  <Text style={styles.staffFormHeroStatLabel} numberOfLines={2}>
+                    Active Staff
+                  </Text>
+                  <Text style={styles.staffFormHeroStatValue} numberOfLines={1} adjustsFontSizeToFit>
+                    {activeEmployees.length}
+                  </Text>
+                </View>
+                <View style={styles.regulariseHeroStatCard}>
+                  <Text style={styles.staffFormHeroStatLabel} numberOfLines={2}>
+                    Visible Now
+                  </Text>
+                  <Text style={styles.staffFormHeroStatValue} numberOfLines={1} adjustsFontSizeToFit>
+                    {loadingEmployees || isFetching ? '...' : rows.length}
+                  </Text>
+                </View>
+                <View style={styles.regulariseHeroStatCard}>
+                  <Text style={styles.staffFormHeroStatLabel} numberOfLines={2}>
+                    Mode
+                  </Text>
+                  <Text style={styles.staffFormHeroStatValue} numberOfLines={1} adjustsFontSizeToFit>
+                    {liveMode ? 'Live' : 'Manual'}
+                  </Text>
+                </View>
+              </View>
             </View>
 
             <Card>
+              <View style={styles.regulariseControlHeader}>
+                <View style={styles.regularisePanelTitleBlock}>
+                  <Text style={styles.sectionTitle}>Daily Controls</Text>
+                  <Text style={styles.regulariseFilterMeta}>Choose a date, search faster, and keep manual corrections consistent.</Text>
+                </View>
+                <View style={[styles.liveModeBadge, liveMode ? styles.liveModeBadgeActive : styles.liveModeBadgeMuted]}>
+                  <Text style={[styles.liveModeBadgeText, liveMode ? styles.liveModeBadgeTextActive : styles.liveModeBadgeTextMuted]}>
+                    {liveMode ? 'Auto Today' : 'Manual Date'}
+                  </Text>
+                </View>
+              </View>
               <View style={styles.dateFieldWrap}>
                 <Text style={styles.dateLabel}>Attendance Date</Text>
                 <Pressable
@@ -369,28 +481,81 @@ function AttendanceRegulariseScreen({ navigation }: { navigation: any }) {
               </View>
             </Card>
 
-            <View style={styles.summaryRow}>
-              <SummaryCard label="Present" value={`${summary.present}`} tone="green" />
-              <SummaryCard label="Absent" value={`${summary.absent}`} tone="red" />
-              <SummaryCard label="Late" value={`${summary.late}`} tone="amber" />
-              <SummaryCard label="Half Day" value={`${summary.half_day}`} tone="slate" />
-              <SummaryCard label="Leave" value={`${summary.leave}`} tone="blue" />
-            </View>
+            <Card>
+              <View style={styles.regularisePanelHeader}>
+                <View style={styles.regularisePanelTitleBlock}>
+                  <Text style={styles.sectionTitle}>Attendance Snapshot</Text>
+                  <Text style={styles.regulariseFilterMeta}>
+                    {filter === 'all'
+                      ? 'A clean one-line summary of today’s attendance mix.'
+                      : `${statusLabel(filter)} filter active with ${activeFilterCount} staff in this status.`}
+                  </Text>
+                </View>
+                {(filter !== 'all' || isSearchActive) && (
+                  <Pressable
+                    style={({ pressed }) => [styles.clearFilterBtn, pressed && styles.clearFilterBtnPressed]}
+                    onPress={() => {
+                      setFilter('all');
+                      setQuery('');
+                    }}>
+                    <Text style={styles.clearFilterBtnText}>Reset</Text>
+                  </Pressable>
+                )}
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRowSingle}>
+                <SummaryCardCompact label="Present" value={`${summary.present}`} tone="green" />
+                <SummaryCardCompact label="Absent" value={`${summary.absent}`} tone="red" />
+                <SummaryCardCompact label="Late" value={`${summary.late}`} tone="amber" />
+                <SummaryCardCompact label="Half Day" value={`${summary.half_day}`} tone="slate" />
+                <SummaryCardCompact label="Leave" value={`${summary.leave}`} tone="blue" />
+              </ScrollView>
+            </Card>
 
             <Card>
-              <Text style={styles.filterTitle}>Filter by Status</Text>
-              <View style={styles.filterWrap}>
-                <FilterChip label="All" active={filter === 'all'} onPress={() => setFilter('all')} />
-                <FilterChip label="Present" active={filter === 'present'} onPress={() => setFilter('present')} />
-                <FilterChip label="Absent" active={filter === 'absent'} onPress={() => setFilter('absent')} />
-                <FilterChip label="Late" active={filter === 'late'} onPress={() => setFilter('late')} />
-                <FilterChip label="Half Day" active={filter === 'half_day'} onPress={() => setFilter('half_day')} />
-                <FilterChip label="Leave" active={filter === 'leave'} onPress={() => setFilter('leave')} />
+              <View style={styles.regularisePanelHeader}>
+                <View style={styles.regularisePanelTitleBlock}>
+                  <Text style={styles.sectionTitle}>Filter By Status</Text>
+                  <Text style={styles.regulariseFilterMeta}>
+                    Search by person details and narrow the list with count-aware attendance status filters.
+                  </Text>
+                </View>
+                <View style={styles.resultsPill}>
+                  <Text style={styles.resultsPillLabel}>Results</Text>
+                  <Text style={styles.resultsPillValue}>{loadingEmployees || isFetching ? '...' : rows.length}</Text>
+                </View>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.regulariseFilterRow}>
+                {statusFilterOptions.map(option => (
+                  <StatusFilterCard
+                    key={option.key}
+                    label={option.label}
+                    count={option.count}
+                    accent={option.accent}
+                    active={filter === option.key}
+                    onPress={() => setFilter(option.key)}
+                  />
+                ))}
+              </ScrollView>
+              <View style={styles.regulariseToolbar}>
+                <View style={styles.activeStatePill}>
+                  <Text style={styles.activeStateLabel}>Current View</Text>
+                  <Text style={styles.activeStateValue}>{filter === 'all' ? 'All Staff' : statusLabel(filter)}</Text>
+                </View>
+                {isSearchActive ? (
+                  <View style={styles.activeStatePill}>
+                    <Text style={styles.activeStateLabel}>Search</Text>
+                    <Text style={styles.activeStateValue} numberOfLines={1}>
+                      {trimmedQuery}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
             </Card>
 
             <Text style={styles.sectionCount}>
-              {loadingEmployees || isFetching ? 'Loading attendance...' : `${rows.length} staff members`}
+              {loadingEmployees || isFetching
+                ? 'Loading attendance...'
+                : `${rows.length} staff members ready for update${filter === 'all' ? '' : ` | ${statusLabel(filter)} view`}`}
             </Text>
           </View>
         }
@@ -407,18 +572,32 @@ function AttendanceRegulariseScreen({ navigation }: { navigation: any }) {
           return (
             <View style={styles.staffCard}>
               <View style={styles.staffHead}>
-                <Text style={styles.staffName} numberOfLines={1}>
-                  {item.employee.employeeCode ? `${item.employee.employeeCode} - ` : ''}
-                  {item.employee.name}
-                </Text>
+                <View style={styles.staffIdentityBlock}>
+                  <View style={styles.staffAvatar}>
+                    <Text style={styles.staffAvatarText}>{item.employee.name.trim().charAt(0).toUpperCase() || '?'}</Text>
+                  </View>
+                  <View style={styles.staffIdentityText}>
+                    <Text style={styles.staffName} numberOfLines={1}>
+                      {item.employee.employeeCode ? `${item.employee.employeeCode} - ` : ''}
+                      {item.employee.name}
+                    </Text>
+                    <Text style={styles.staffMeta} numberOfLines={1}>
+                      {safeText(item.employee.designation, 'Unknown Role')} | {safeText(item.employee.phone, 'No Phone')}
+                    </Text>
+                  </View>
+                </View>
                 <View style={styles.currentStatusBadge}>
-                  <Text style={styles.currentStatusText}>{statusLabel(item.selected).toUpperCase()}</Text>
+                  <Text style={styles.currentStatusLabel}>Current</Text>
+                  <Text style={styles.currentStatusText}>{statusLabel(item.selected)}</Text>
                 </View>
               </View>
 
-              <Text style={styles.staffMeta} numberOfLines={1}>
-                {safeText(item.employee.designation, 'Unknown Role')} | {safeText(item.employee.phone, 'No Phone')}
-              </Text>
+              <View style={styles.staffCardDivider} />
+
+              <View style={styles.staffCardActionHeader}>
+                <Text style={styles.staffCardActionTitle}>Set Attendance Status</Text>
+                <Text style={styles.staffCardActionHint}>{isSaving ? 'Saving selection...' : 'Tap once to update instantly'}</Text>
+              </View>
 
               <View style={styles.filterWrap}>
                 {attendanceStatuses.map(status => {
@@ -440,6 +619,10 @@ function AttendanceRegulariseScreen({ navigation }: { navigation: any }) {
           );
         }}
       />
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
     </View>
   );
 }
@@ -447,6 +630,7 @@ function AttendanceRegulariseScreen({ navigation }: { navigation: any }) {
 function IndividualAttendanceReportScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [staffDropdownOpen, setStaffDropdownOpen] = useState(false);
   const [staffSearchInput, setStaffSearchInput] = useState('');
@@ -543,12 +727,22 @@ function IndividualAttendanceReportScreen({ navigation }: { navigation: any }) {
   };
 
   return (
-    <Screen>
-      <View style={styles.formHeader}>
+    <View style={styles.page}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <ScrollView contentContainerStyle={[styles.innerContent, { paddingTop: Math.max(insets.top + 38, 66) }]} showsVerticalScrollIndicator={false}>
+      <View style={styles.staffFormHero}>
+        <View style={styles.staffFormHeroTop}>
+          <View style={styles.staffFormBadge}>
+            <Text style={styles.staffFormBadgeText}>Attendance Report</Text>
+          </View>
+          <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+            <Text style={styles.closeText}>Close</Text>
+          </Pressable>
+        </View>
         <Text style={styles.formTitle}>Individual Attendance Report</Text>
-        <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
-          <Text style={styles.closeText}>Close</Text>
-        </Pressable>
+        <Text style={styles.staffFormIntro}>
+          Select a staff member and date range to review detailed attendance history and export a report.
+        </Text>
       </View>
 
       <Card>
@@ -667,13 +861,19 @@ function IndividualAttendanceReportScreen({ navigation }: { navigation: any }) {
           onChange={onDatePick}
         />
       ) : null}
-    </Screen>
+      </ScrollView>
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
+    </View>
   );
 }
 
 function AllAttendanceReportScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const [fromDate, setFromDate] = useState(dayjs().startOf('month').format('YYYY-MM-DD'));
   const [toDate, setToDate] = useState(dayjs().endOf('month').format('YYYY-MM-DD'));
   const [pickerMode, setPickerMode] = useState<'from' | 'to' | null>(null);
@@ -761,18 +961,45 @@ function AllAttendanceReportScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={styles.page}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       <FlatList
         data={rows}
         keyExtractor={item => item.id}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.editListContent, { paddingTop: Math.max(insets.top + 38, 66) }]}
         ListHeaderComponent={
           <View style={styles.headerBlock}>
-            <View style={styles.formHeader}>
-              <Text style={styles.formTitle}>All Employee Attendance Report</Text>
-              <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
-                <Text style={styles.closeText}>Close</Text>
-              </Pressable>
+            <View style={styles.staffFormHero}>
+              <View style={styles.staffFormHeroTop}>
+                <View style={styles.staffFormBadge}>
+                  <Text style={styles.staffFormBadgeText}>Attendance Report</Text>
+                </View>
+                <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+                  <Text style={styles.closeText}>Close</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.formTitle}>All Staff Attendance Report</Text>
+              <Text style={styles.staffFormIntro}>
+                Review attendance summary for the full team, filter by date range, and export the final report when needed.
+              </Text>
+              <View style={styles.reportHeroStatsGrid}>
+                <View style={styles.reportHeroStatCard}>
+                  <Text style={styles.staffFormHeroStatLabel}>Rows</Text>
+                  <Text style={styles.staffFormHeroStatValue}>{isLoading ? '...' : rows.length}</Text>
+                </View>
+                <View style={styles.reportHeroStatCard}>
+                  <Text style={styles.staffFormHeroStatLabel}>Present</Text>
+                  <Text style={styles.staffFormHeroStatValue}>{summary.present}</Text>
+                </View>
+                <View style={styles.reportHeroStatCard}>
+                  <Text style={styles.staffFormHeroStatLabel}>Late + Half Day</Text>
+                  <Text style={styles.staffFormHeroStatValue}>{summary.late + summary.half_day}</Text>
+                </View>
+                <View style={styles.reportHeroStatCard}>
+                  <Text style={styles.staffFormHeroStatLabel}>Absent + Leave</Text>
+                  <Text style={styles.staffFormHeroStatValue}>{summary.absent + summary.leave}</Text>
+                </View>
+              </View>
             </View>
 
             <Card>
@@ -783,15 +1010,6 @@ function AllAttendanceReportScreen({ navigation }: { navigation: any }) {
               </View>
               {!isValidRange(fromDate, toDate) ? <Text style={styles.rangeError}>Invalid date range. Keep From {'<='} To.</Text> : null}
             </Card>
-
-            <View style={styles.summaryRow}>
-              <SummaryCard label="Rows" value={`${summary.total}`} tone="slate" />
-              <SummaryCard label="Present" value={`${summary.present}`} tone="green" />
-              <SummaryCard label="Absent" value={`${summary.absent}`} tone="red" />
-              <SummaryCard label="Late" value={`${summary.late}`} tone="amber" />
-              <SummaryCard label="Half Day" value={`${summary.half_day}`} tone="blue" />
-              <SummaryCard label="Leave" value={`${summary.leave}`} tone="slate" />
-            </View>
 
             <Card>
               <View style={styles.reportActionsRow}>
@@ -846,6 +1064,10 @@ function AllAttendanceReportScreen({ navigation }: { navigation: any }) {
           );
         }}
       />
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
 
       {pickerMode ? (
         <DateTimePicker
@@ -863,20 +1085,24 @@ function ActionButton({
   icon,
   tone,
   title,
+  description,
   onPress,
 }: {
   icon: string;
   tone: 'emerald' | 'blue' | 'violet' | 'teal';
   title: string;
+  description: string;
   onPress: () => void;
 }) {
   const palette = attendanceActionPalette(tone);
   return (
     <Pressable style={({ pressed }) => [styles.actionSquare, pressed && styles.actionSquarePressed]} onPress={onPress}>
+      <View style={[styles.actionAccent, { backgroundColor: palette.fg }]} />
       <View style={[styles.actionIconWrap, { backgroundColor: palette.bg, borderColor: palette.border }]}>
-        <Text style={[styles.actionIconText, { color: palette.fg }]}>{icon}</Text>
+        <Ionicons name={icon} size={20} color={palette.fg} />
       </View>
       <Text style={styles.actionTileTitle}>{title}</Text>
+      <Text style={styles.actionTileDescription}>{description}</Text>
     </Pressable>
   );
 }
@@ -891,10 +1117,30 @@ function attendanceActionPalette(tone: 'emerald' | 'blue' | 'violet' | 'teal') {
   return palette[tone];
 }
 
-function FilterChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+function StatusFilterCard({
+  label,
+  count,
+  accent,
+  active,
+  onPress,
+}: {
+  label: string;
+  count: number;
+  accent: string;
+  active: boolean;
+  onPress: () => void;
+}) {
   return (
-    <Pressable style={[styles.filterChip, active ? styles.filterChipSelected : undefined]} onPress={onPress}>
-      <Text style={[styles.filterChipText, active ? styles.filterChipTextSelected : undefined]}>{label}</Text>
+    <Pressable
+      style={({ pressed }) => [
+        styles.statusFilterCard,
+        active && styles.statusFilterCardActive,
+        pressed && !active ? styles.statusFilterCardPressed : undefined,
+      ]}
+      onPress={onPress}>
+      <View style={[styles.statusFilterAccent, { backgroundColor: accent }]} />
+      <Text style={[styles.statusFilterCount, { color: accent }]}>{count}</Text>
+      <Text style={[styles.statusFilterLabel, active && styles.statusFilterLabelActive]}>{label}</Text>
     </Pressable>
   );
 }
@@ -910,7 +1156,7 @@ function InfoPill({ label, value, warning }: { label: string; value: string; war
   );
 }
 
-function SummaryCard({
+function SummaryCardCompact({
   label,
   value,
   tone,
@@ -920,17 +1166,17 @@ function SummaryCard({
   tone: 'green' | 'red' | 'amber' | 'slate' | 'blue';
 }) {
   const palette = {
-    green: { bg: '#e8f9f1', fg: '#0f9f63' },
-    red: { bg: '#fdeeee', fg: '#c22a2a' },
-    amber: { bg: '#fff4df', fg: '#ba7a1d' },
-    slate: { bg: '#eef2f7', fg: '#334155' },
-    blue: { bg: '#e6effd', fg: '#1458bf' },
+    green: { bg: '#e8f9f1', fg: '#0f9f63', border: '#bde6d0' },
+    red: { bg: '#fdeeee', fg: '#c22a2a', border: '#f5caca' },
+    amber: { bg: '#fff4df', fg: '#ba7a1d', border: '#f1ddb4' },
+    slate: { bg: '#eef2f7', fg: '#334155', border: '#d8e1ea' },
+    blue: { bg: '#e6effd', fg: '#1458bf', border: '#c8dafe' },
   } as const;
 
   return (
-    <View style={[styles.summaryCard, { backgroundColor: palette[tone].bg }]}>
-      <Text style={styles.summaryLabel}>{label}</Text>
-      <Text style={[styles.summaryValue, { color: palette[tone].fg }]}>{value}</Text>
+    <View style={[styles.summaryCompactCard, { backgroundColor: palette[tone].bg, borderColor: palette[tone].border }]}>
+      <Text style={styles.summaryCompactLabel}>{label}</Text>
+      <Text style={[styles.summaryCompactValue, { color: palette[tone].fg }]}>{value}</Text>
     </View>
   );
 }
@@ -1051,79 +1297,150 @@ function safeText(value?: string | null, fallback = '-') {
 const styles = StyleSheet.create({
   page: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: '#f3f6fb',
   },
   content: {
-    paddingHorizontal: 16,
     paddingBottom: 24,
-    gap: 12,
+  },
+  innerContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 28,
+    gap: 14,
+  },
+  editListContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 28,
+    gap: 14,
   },
   headerBlock: {
-    gap: 10,
+    gap: 14,
   },
   banner: {
-    marginHorizontal: -16,
-    borderWidth: 1,
-    borderColor: '#0f8f6f',
-    backgroundColor: '#0c8a69',
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
-    borderBottomLeftRadius: 14,
-    borderBottomRightRadius: 14,
-    paddingHorizontal: 14,
-    paddingTop: 16,
-    paddingBottom: 14,
-    gap: 4,
+    backgroundColor: colors.success,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    paddingHorizontal: 16,
+    paddingBottom: 18,
+    gap: 14,
     overflow: 'hidden',
   },
   headerGradientBase: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#0b8f6d',
   },
-  headerGradientMid: {
-    ...StyleSheet.absoluteFillObject,
-    top: '34%',
-    backgroundColor: '#0a7e60',
-  },
   headerGradientGlowTop: {
     position: 'absolute',
     top: -90,
-    right: -60,
+    right: -50,
     width: 240,
     height: 240,
     borderRadius: 120,
-    backgroundColor: '#3ac39f',
-    opacity: 0.34,
+    backgroundColor: '#30b28b',
+    opacity: 0.26,
   },
   headerGradientGlowBottom: {
     position: 'absolute',
-    bottom: -105,
-    left: -50,
-    width: 250,
-    height: 250,
-    borderRadius: 125,
+    bottom: -120,
+    left: -40,
+    width: 220,
+    height: 220,
+    borderRadius: 110,
     backgroundColor: '#06644d',
-    opacity: 0.5,
+    opacity: 0.3,
+  },
+  attendanceHeaderTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  attendanceHeaderBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+  },
+  attendanceHeaderBadgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  menuBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(9, 82, 64, 0.9)',
+  },
+  menuBtnPressed: {
+    backgroundColor: '#085542',
+  },
+  attendanceHeaderTextBlock: {
+    gap: 4,
   },
   bannerTitle: {
     color: '#ffffff',
-    fontSize: 33,
+    fontSize: 32,
     fontWeight: '900',
   },
   bannerSub: {
-    color: '#d7fff1',
-    fontSize: 15,
+    color: '#defbf1',
+    fontSize: 17,
     fontWeight: '700',
   },
-  bannerDivider: {
-    height: 1,
-    backgroundColor: '#62c7ab',
-    marginVertical: 6,
+  bannerPowered: {
+    color: '#c8f3e8',
+    fontSize: 14,
+    fontWeight: '600',
   },
-  bannerSection: {
+  attendanceSummaryCard: {
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(6, 85, 64, 0.32)',
+    gap: 8,
+  },
+  attendanceSummaryEyebrow: {
+    color: '#d6f8ed',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  attendanceSummaryTitle: {
     color: '#ffffff',
+    fontSize: 22,
     fontWeight: '800',
-    fontSize: 20,
+  },
+  attendanceSummaryText: {
+    color: '#e8fff7',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  attendanceSummaryPoints: {
+    marginTop: 4,
+    gap: 8,
+  },
+  attendanceSummaryPoint: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  attendanceSummaryPointText: {
+    flex: 1,
+    color: '#dffbf1',
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  bodyWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    gap: 14,
   },
   formHeader: {
     flexDirection: 'row',
@@ -1174,49 +1491,61 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 10,
   },
+  attendanceActionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
   actionSquare: {
-    width: '48%',
-    minHeight: 120,
-    borderWidth: 1.5,
-    borderColor: '#cfd9e6',
-    borderRadius: 14,
+    width: '47.5%',
+    minHeight: 188,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    borderRadius: 18,
     backgroundColor: '#ffffff',
-    paddingHorizontal: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.05,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 10,
-    elevation: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.06,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 12,
+    elevation: 2,
   },
   actionSquarePressed: {
-    backgroundColor: '#f2f8fd',
-    borderColor: '#b7c8de',
+    backgroundColor: '#f8fbff',
+    borderColor: '#c9d6e6',
+  },
+  actionAccent: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 4,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
   },
   actionIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef3f9',
     borderWidth: 1,
-    borderColor: '#d8e2ed',
-  },
-  actionIconText: {
-    color: '#334155',
-    fontSize: 18,
-    fontWeight: '800',
   },
   actionTileTitle: {
     color: colors.textPrimary,
     fontWeight: '800',
-    fontSize: 17,
-    textAlign: 'center',
-    lineHeight: 22,
+    fontSize: 18,
+    lineHeight: 24,
+    marginTop: 14,
+  },
+  actionTileDescription: {
+    marginTop: 8,
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
   },
   infoGrid: {
     flexDirection: 'row',
@@ -1253,10 +1582,11 @@ const styles = StyleSheet.create({
   summaryRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    justifyContent: 'space-between',
     gap: 8,
   },
   summaryCard: {
-    width: '48%',
+    width: '48.5%',
     minHeight: 84,
     borderRadius: 12,
     borderWidth: 1,
@@ -1274,6 +1604,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 22,
     fontWeight: '800',
+    textAlign: 'center',
   },
   filterTitle: {
     color: colors.textPrimary,
@@ -1310,6 +1641,136 @@ const styles = StyleSheet.create({
   sectionCount: {
     color: colors.textPrimary,
     fontWeight: '700',
+  },
+  formStatusTexture: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.success,
+    overflow: 'hidden',
+    zIndex: 20,
+    elevation: 20,
+  },
+  formStatusTextureGlowTop: {
+    position: 'absolute',
+    top: -42,
+    right: -18,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    backgroundColor: '#30b28b',
+    opacity: 0.24,
+  },
+  formStatusTextureGlowBottom: {
+    position: 'absolute',
+    bottom: -54,
+    left: -24,
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    backgroundColor: '#05654d',
+    opacity: 0.22,
+  },
+  staffFormHero: {
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#d8e2ed',
+    backgroundColor: '#f7fbff',
+    padding: 16,
+    gap: 12,
+  },
+  staffFormHeroTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
+  },
+  staffFormBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: colors.primarySoft,
+  },
+  staffFormBadgeText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  staffFormIntro: {
+    color: colors.textSecondary,
+    lineHeight: 21,
+    fontWeight: '500',
+  },
+  staffFormHeroStats: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  staffFormHeroStatsScroll: {
+    paddingRight: 4,
+  },
+  regulariseHeroStatsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    alignItems: 'stretch',
+    gap: 10,
+  },
+  regulariseHeroStatCard: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 86,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    gap: 4,
+  },
+  reportHeroStatsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  reportHeroStatCard: {
+    width: '48%',
+    minHeight: 74,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    gap: 4,
+  },
+  staffFormHeroStatCard: {
+    flex: 1,
+    minWidth: 112,
+    minHeight: 74,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    gap: 4,
+  },
+  staffFormHeroStatLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    lineHeight: 14,
+  },
+  staffFormHeroStatValue: {
+    color: colors.textPrimary,
+    fontSize: 18,
+    fontWeight: '800',
   },
   dateFieldWrap: {
     gap: 6,
@@ -1360,6 +1821,55 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 12,
   },
+  regulariseControlHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 2,
+  },
+  regularisePanelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  regularisePanelTitleBlock: {
+    flex: 1,
+    gap: 4,
+  },
+  regulariseFilterMeta: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  liveModeBadge: {
+    minHeight: 32,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  liveModeBadgeActive: {
+    borderColor: '#b7ead3',
+    backgroundColor: '#e8f9f1',
+  },
+  liveModeBadgeMuted: {
+    borderColor: '#d9e2ee',
+    backgroundColor: '#f8fafc',
+  },
+  liveModeBadgeText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  liveModeBadgeTextActive: {
+    color: '#0a7559',
+  },
+  liveModeBadgeTextMuted: {
+    color: '#475569',
+  },
   collectModeRow: {
     gap: 8,
   },
@@ -1380,6 +1890,143 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 12,
   },
+  summaryRowSingle: {
+    gap: 8,
+    paddingRight: 4,
+  },
+  summaryCompactCard: {
+    minWidth: 110,
+    minHeight: 66,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    gap: 4,
+  },
+  summaryCompactLabel: {
+    color: colors.textMuted,
+    fontWeight: '700',
+    fontSize: 11,
+    textTransform: 'uppercase',
+  },
+  summaryCompactValue: {
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  clearFilterBtn: {
+    minHeight: 34,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+  },
+  clearFilterBtnPressed: {
+    backgroundColor: '#f8fafc',
+  },
+  clearFilterBtnText: {
+    color: colors.textSecondary,
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  regulariseFilterRow: {
+    gap: 10,
+    paddingVertical: 2,
+    paddingRight: 4,
+  },
+  statusFilterCard: {
+    width: 112,
+    minHeight: 92,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 4,
+  },
+  statusFilterCardActive: {
+    borderColor: '#b7ead3',
+    backgroundColor: '#f4fcf8',
+  },
+  statusFilterCardPressed: {
+    backgroundColor: '#f8fafc',
+  },
+  statusFilterAccent: {
+    width: 24,
+    height: 4,
+    borderRadius: 999,
+    marginBottom: 2,
+  },
+  statusFilterCount: {
+    fontSize: 24,
+    fontWeight: '900',
+  },
+  statusFilterLabel: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  statusFilterLabelActive: {
+    color: colors.textPrimary,
+  },
+  resultsPill: {
+    minWidth: 72,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  resultsPillLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  resultsPillValue: {
+    color: colors.textPrimary,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  regulariseToolbar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+  },
+  activeStatePill: {
+    maxWidth: '100%',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  activeStateLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  activeStateValue: {
+    flexShrink: 1,
+    color: colors.textPrimary,
+    fontSize: 12,
+    fontWeight: '800',
+  },
   staffCard: {
     backgroundColor: '#ffffff',
     borderWidth: 1,
@@ -1387,15 +2034,44 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 12,
     gap: 10,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 12,
+    elevation: 1,
   },
   staffHead: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  staffIdentityBlock: {
+    flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
-  staffName: {
+  staffIdentityText: {
     flex: 1,
+    gap: 3,
+  },
+  staffAvatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#e8f1ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#cdddfc',
+  },
+  staffAvatarText: {
+    color: '#1458bf',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  staffName: {
     color: colors.textPrimary,
     fontWeight: '800',
     fontSize: 16,
@@ -1405,18 +2081,47 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 12,
   },
+  staffCardDivider: {
+    height: 1,
+    backgroundColor: '#e7edf4',
+  },
+  staffCardActionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  staffCardActionTitle: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  staffCardActionHint: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+  },
   currentStatusBadge: {
     borderWidth: 1,
     borderColor: '#b7ead3',
-    borderRadius: 999,
+    borderRadius: 14,
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 7,
     backgroundColor: '#e8f9f1',
+    minWidth: 82,
+    alignItems: 'center',
+    gap: 2,
+  },
+  currentStatusLabel: {
+    color: '#4d7c68',
+    fontWeight: '700',
+    fontSize: 10,
+    textTransform: 'uppercase',
   },
   currentStatusText: {
     color: '#0a7559',
     fontWeight: '800',
-    fontSize: 10,
+    fontSize: 12,
   },
   savingText: {
     color: colors.textMuted,

@@ -1,6 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Animated,
   Alert,
   FlatList,
   KeyboardAvoidingView,
@@ -15,22 +14,27 @@ import {
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import dayjs from 'dayjs';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Card, Field, PrimaryButton } from '../../components/ui';
-import { shiftsCol } from '../../services/firebase';
+import { createStaffAuthUserLocally, deleteStaffAuthUserLocally } from '../../services/authService';
 import { useAppSelector } from '../../store/hooks';
 import {
+  useCreateShiftTemplateMutation,
+  useDeleteShiftTemplateMutation,
   useDeleteEmployeeMutation,
   useGetEmployeesQuery,
   useGetShopByIdQuery,
   useGetShiftsQuery,
-  useGetWeeklyShiftPlanQuery,
+  useGetShiftTemplatesQuery,
+  useGetStaffWeeklyShiftPlanByStaffQuery,
   useUpsertEmployeeMutation,
-  useUpsertShiftMutation,
-  useUpsertWeeklyShiftPlanMutation,
+  useSaveStaffWeeklyShiftPlanV2Mutation,
+  useUpdateShiftTemplateMutation,
 } from '../../store/hrmsApi';
 import { formatDisplayDate, todayDate } from '../../utils/date';
 import { colors } from '../../theme/colors';
-import type { Employee, EmployeeStatus, WeeklyOffDay } from '../../types/models';
+import type { Employee, EmployeeAuthStatus, EmployeeStatus, ShiftTemplate, StaffWeeklyShiftDay, WeeklyOffDay } from '../../types/models';
 
 type StaffStackParamList = {
   StaffList: undefined;
@@ -47,6 +51,8 @@ interface EmployeeForm {
   employeeCode: string;
   name: string;
   phone: string;
+  loginEmail: string;
+  loginPassword: string;
   addressLine1: string;
   taluka: string;
   district: string;
@@ -71,6 +77,8 @@ const initialForm: EmployeeForm = {
   employeeCode: '',
   name: '',
   phone: '',
+  loginEmail: '',
+  loginPassword: '',
   addressLine1: '',
   taluka: '',
   district: '',
@@ -116,6 +124,78 @@ const weekDayLabel: Record<(typeof weekDays)[number], string> = {
   sun: 'Sun',
 };
 
+const plannerDays = [
+  { dayOfWeek: 0, key: 'mon', label: 'Monday', short: 'Mon' },
+  { dayOfWeek: 1, key: 'tue', label: 'Tuesday', short: 'Tue' },
+  { dayOfWeek: 2, key: 'wed', label: 'Wednesday', short: 'Wed' },
+  { dayOfWeek: 3, key: 'thu', label: 'Thursday', short: 'Thu' },
+  { dayOfWeek: 4, key: 'fri', label: 'Friday', short: 'Fri' },
+  { dayOfWeek: 5, key: 'sat', label: 'Saturday', short: 'Sat' },
+  { dayOfWeek: 6, key: 'sun', label: 'Sunday', short: 'Sun' },
+] as const;
+const EMPTY_WEEKLY_SHIFT_DAYS: StaffWeeklyShiftDay[] = [];
+
+const getEmployeeAuthStatus = (employee?: Pick<Employee, 'authStatus' | 'authUid'>): EmployeeAuthStatus => {
+  if (!employee) {
+    return 'not_created';
+  }
+  if (employee.authStatus) {
+    return employee.authStatus;
+  }
+  return employee.authUid ? 'provisioned' : 'not_created';
+};
+
+const getEmployeeAuthStatusLabel = (employee?: Pick<Employee, 'authStatus' | 'authUid'>) => {
+  const status = getEmployeeAuthStatus(employee);
+  switch (status) {
+    case 'pending':
+      return 'Pending';
+    case 'provisioned':
+      return 'Provisioned';
+    case 'disabled':
+      return 'Disabled';
+    case 'error':
+      return 'Error';
+    case 'not_created':
+    default:
+      return 'Not Created';
+  }
+};
+
+const getEmployeeAuthStatusVariant = (employee?: Pick<Employee, 'authStatus' | 'authUid'>) => {
+  const status = getEmployeeAuthStatus(employee);
+  if (status === 'provisioned') {
+    return 'provisioned';
+  }
+  if (status === 'disabled') {
+    return 'disabled';
+  }
+  if (status === 'error') {
+    return 'error';
+  }
+  if (status === 'pending') {
+    return 'pending';
+  }
+  return 'not_created';
+};
+
+const getEmployeeAuthStyleKeys = (employee?: Pick<Employee, 'authStatus' | 'authUid'>) => {
+  const variant = getEmployeeAuthStatusVariant(employee);
+  if (variant === 'provisioned') {
+    return { pill: 'authPillProvisioned', text: 'authPillTextProvisioned' } as const;
+  }
+  if (variant === 'disabled') {
+    return { pill: 'authPillDisabled', text: 'authPillTextDisabled' } as const;
+  }
+  if (variant === 'error') {
+    return { pill: 'authPillError', text: 'authPillTextError' } as const;
+  }
+  if (variant === 'pending') {
+    return { pill: 'authPillPending', text: 'authPillTextPending' } as const;
+  }
+  return { pill: 'authPillNotCreated', text: 'authPillTextNotCreated' } as const;
+};
+
 const Stack = createNativeStackNavigator<StaffStackParamList>();
 
 export function StaffScreen() {
@@ -135,43 +215,154 @@ export function StaffScreen() {
 function StaffListScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const { data: shop } = useGetShopByIdQuery(shopId, { skip: !shopId });
+  const { data: employees = [] } = useGetEmployeesQuery(shopId, { skip: !shopId });
+  const { data: shifts = [] } = useGetShiftsQuery(shopId, { skip: !shopId });
+
+  const activeStaffCount = useMemo(() => employees.filter(employee => employee.status === 'active').length, [employees]);
+  const inactiveStaffCount = useMemo(() => employees.filter(employee => employee.status === 'inactive').length, [employees]);
+  const plannerStaffCount = useMemo(() => employees.filter(employee => employee.status === 'active').length, [employees]);
+  const accessReadyCount = useMemo(
+    () => employees.filter(employee => getEmployeeAuthStatus(employee) === 'provisioned' || getEmployeeAuthStatus(employee) === 'pending').length,
+    [employees],
+  );
+  const accessDisabledCount = useMemo(
+    () => employees.filter(employee => getEmployeeAuthStatus(employee) === 'disabled').length,
+    [employees],
+  );
+
+  const actionTiles = [
+    {
+      icon: 'person-add-outline',
+      tone: 'emerald' as const,
+      label: 'Add Staff Member',
+      description: 'Create a new staff profile with salary and shift details.',
+      onPress: () => navigation.navigate('StaffForm', { mode: 'new' }),
+    },
+    {
+      icon: 'create-outline',
+      tone: 'blue' as const,
+      label: 'Update Staff Details',
+      description: 'Edit personal details, salary, shift, and joining records.',
+      onPress: () => navigation.navigate('StaffEditTable'),
+    },
+    {
+      icon: 'person-off-outline',
+      tone: 'red' as const,
+      label: 'Activate or Deactivate',
+      description: 'Update staff working status without deleting the record.',
+      onPress: () => navigation.navigate('StaffDeactivateTable'),
+    },
+    {
+      icon: 'alarm-outline',
+      tone: 'violet' as const,
+      label: 'Manage Shift Templates',
+      description: 'Create and maintain standard shift timings for your team.',
+      onPress: () => navigation.navigate('StaffShiftScreen'),
+    },
+    {
+      icon: 'calendar-clear-outline',
+      tone: 'amber' as const,
+      label: 'Weekly Shift Planner',
+      description: 'Assign existing shifts or off days for each weekday.',
+      onPress: () => navigation.navigate('WeeklyShiftPlanner'),
+    },
+    {
+      icon: 'list-outline',
+      tone: 'teal' as const,
+      label: 'View All Staff',
+      description: 'Open the full staff list with status, role, and shift details.',
+      onPress: () => navigation.navigate('AllStaffList'),
+    },
+  ];
+
+  const openDrawer = () => {
+    const parent = navigation.getParent?.();
+    if (parent?.openDrawer) {
+      parent.openDrawer();
+    }
+  };
 
   return (
     <View style={styles.page}>
-      <StatusBar backgroundColor="#0b8f6d" barStyle="light-content" />
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
         <View style={styles.headerBlock}>
-          <View style={styles.staffHeaderCard}>
+          <View style={[styles.staffHeaderCard, { paddingTop: insets.top + 16 }]}>
             <View style={styles.staffHeaderGradientBase} />
-            <View style={styles.staffHeaderGradientMid} />
             <View style={styles.staffHeaderGradientGlowTop} />
             <View style={styles.staffHeaderGradientGlowBottom} />
-            <Text style={styles.staffHeaderTitle}>{shop?.shopName ?? 'Staff'}</Text>
-            <Text style={styles.staffHeaderMeta} numberOfLines={2}>
-              {shop?.address ?? '-'}
-            </Text>
-            <Text style={styles.staffHeaderMeta}>Powered by RVM Attend</Text>
-            <View style={styles.staffHeaderDivider} />
-            <Text style={styles.staffHeaderSubTitle}>Staff</Text>
-            <Text style={styles.staffHeaderSubMeta}>Choose an action to open the required staff module.</Text>
+
+            <View style={styles.staffHeaderTopRow}>
+              <View style={styles.staffHeaderBadge}>
+                <Text style={styles.staffHeaderBadgeText}>Staff Management</Text>
+              </View>
+              <Pressable style={({ pressed }) => [styles.menuBtn, pressed && styles.menuBtnPressed]} onPress={openDrawer}>
+                <Ionicons name="menu" size={24} color="#ffffff" />
+              </Pressable>
+            </View>
+
+            <View style={styles.staffHeaderTextBlock}>
+              <Text style={styles.staffHeaderTitle}>{shop?.shopName ?? 'Staff'}</Text>
+              <Text style={styles.staffHeaderMeta} numberOfLines={1}>
+                {shop?.address ?? 'Address not available'}
+              </Text>
+              <Text style={styles.staffHeaderPoweredBy}>Powered Nexora RVM Infotech</Text>
+            </View>
+
+            <View style={styles.staffSummaryCard}>
+              <Text style={styles.staffSummaryEyebrow}>Staff Overview</Text>
+              <View style={styles.staffSummaryGrid}>
+                <View style={styles.staffSummaryCountCard}>
+                  <Text style={styles.staffSummaryMetaLabel}>Active Staff</Text>
+                  <Text style={styles.staffSummaryMetaValue}>{activeStaffCount}</Text>
+                </View>
+                <View style={styles.staffSummaryCountCard}>
+                  <Text style={styles.staffSummaryMetaLabel}>Inactive Staff</Text>
+                  <Text style={styles.staffSummaryMetaValue}>{inactiveStaffCount}</Text>
+                </View>
+                <View style={styles.staffSummaryCountCard}>
+                  <Text style={styles.staffSummaryMetaLabel}>Active Shifts</Text>
+                  <Text style={styles.staffSummaryMetaValue}>{shifts.length}</Text>
+                </View>
+                <View style={styles.staffSummaryCountCard}>
+                  <Text style={styles.staffSummaryMetaLabel}>Planner Staff</Text>
+                  <Text style={styles.staffSummaryMetaValue}>{plannerStaffCount}</Text>
+                </View>
+                <View style={styles.staffSummaryCountCard}>
+                  <Text style={styles.staffSummaryMetaLabel}>Access Ready</Text>
+                  <Text style={styles.staffSummaryMetaValue}>{accessReadyCount}</Text>
+                </View>
+                <View style={styles.staffSummaryCountCard}>
+                  <Text style={styles.staffSummaryMetaLabel}>Access Disabled</Text>
+                  <Text style={styles.staffSummaryMetaValue}>{accessDisabledCount}</Text>
+                </View>
+              </View>
+            </View>
           </View>
 
           <View style={styles.actionGrid}>
-            <ActionTile icon="⊕" tone="emerald" label="Create New Staff" onPress={() => navigation.navigate('StaffForm', { mode: 'new' })} active={false} />
-            <ActionTile icon="✎" tone="blue" label="Edit Staff Details" onPress={() => navigation.navigate('StaffEditTable')} active={false} />
-            <ActionTile icon="⊘" tone="red" label="Mark De-activate Staff" onPress={() => navigation.navigate('StaffDeactivateTable')} active={false} />
-            <ActionTile icon="◷" tone="violet" label="Create Shifts" onPress={() => navigation.navigate('StaffShiftScreen')} active={false} />
-            <ActionTile icon="◫" tone="amber" label="Weekly Shift Planner" onPress={() => navigation.navigate('WeeklyShiftPlanner')} active={false} />
-            <ActionTile icon="▦" tone="teal" label="All Staff List" onPress={() => navigation.navigate('AllStaffList')} active={false} />
+            {actionTiles.map(item => (
+              <ActionTile
+                key={item.label}
+                icon={item.icon}
+                tone={item.tone}
+                label={item.label}
+                description={item.description}
+                onPress={item.onPress}
+              />
+            ))}
           </View>
 
-          <Card>
-            <Text style={styles.policyTitle}>Shift Planning Rule</Text>
-            <Text style={styles.policyText}>1. Weekly shift planning is for rotational staff.</Text>
-            <Text style={styles.policyText}>2. Fixed shift staff should be configured in Staff Profile as Default Shift.</Text>
-            <Text style={styles.policyText}>3. Use Weekly Shift Planner to update weekly assignments for non-fixed staff.</Text>
-          </Card>
+          <View style={styles.sectionPad}>
+            <Card>
+              <Text style={styles.policyTitle}>Shift Planning Guidelines</Text>
+              <Text style={styles.policyText}>1. Create reusable shift templates first in Shift Management.</Text>
+              <Text style={styles.policyText}>2. Use Weekly Shift Planner only to map existing shifts or off days for Monday to Sunday.</Text>
+              <Text style={styles.policyText}>3. Shift creation and weekly planning are separate modules and should be managed separately.</Text>
+            </Card>
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -182,27 +373,24 @@ function ActionTile({
   icon,
   tone,
   label,
+  description,
   onPress,
-  active,
 }: {
   icon: string;
   tone: 'emerald' | 'blue' | 'red' | 'violet' | 'amber' | 'teal';
   label: string;
+  description: string;
   onPress: () => void;
-  active: boolean;
 }) {
   const palette = actionTonePalette(tone);
   return (
-    <Pressable style={({ pressed }) => [styles.actionTile, active ? styles.actionTileActive : undefined, pressed && styles.actionTilePressed]} onPress={onPress}>
-      <View
-        style={[
-          styles.actionTileIconWrap,
-          { backgroundColor: palette.bg, borderColor: palette.border },
-          active ? styles.actionTileIconWrapActive : undefined,
-        ]}>
-        <Text style={[styles.actionTileIcon, { color: palette.fg }, active ? styles.actionTileIconActive : undefined]}>{icon}</Text>
+    <Pressable style={({ pressed }) => [styles.actionTile, pressed && styles.actionTilePressed]} onPress={onPress}>
+      <View style={[styles.actionTileAccent, { backgroundColor: palette.fg }]} />
+      <View style={[styles.actionTileIconWrap, { backgroundColor: palette.bg, borderColor: palette.border }]}>
+        <Ionicons name={icon} size={20} color={palette.fg} />
       </View>
-      <Text style={[styles.actionTileText, active ? styles.actionTileTextActive : undefined]}>{label}</Text>
+      <Text style={styles.actionTileText}>{label}</Text>
+      <Text style={styles.actionTileDescription}>{description}</Text>
     </Pressable>
   );
 }
@@ -222,79 +410,96 @@ function actionTonePalette(tone: 'emerald' | 'blue' | 'red' | 'violet' | 'amber'
 function WeeklyShiftPlannerScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
-  const [weekStartDate, setWeekStartDate] = useState(dayjs().startOf('week').add(1, 'day').format('YYYY-MM-DD'));
-  const [showWeekDatePicker, setShowWeekDatePicker] = useState(false);
-  const [planEmployeeId, setPlanEmployeeId] = useState('');
-  const [planShiftId, setPlanShiftId] = useState('');
-  const [planDay, setPlanDay] = useState<(typeof weekDays)[number]>('mon');
+  const insets = useSafeAreaInsets();
+  const [selectedStaffId, setSelectedStaffId] = useState('');
+  const [draftDays, setDraftDays] = useState<StaffWeeklyShiftDay[]>(() => buildEmptyWeeklyPlan('', ''));
   const [savingPlan, setSavingPlan] = useState(false);
-  const [modeFilter, setModeFilter] = useState<'all' | 'weekly' | 'fixed'>('all');
   const { data: employees = [] } = useGetEmployeesQuery(shopId, { skip: !shopId });
-  const { data: shifts = [] } = useGetShiftsQuery(shopId, { skip: !shopId });
-  const { data: weeklyPlans = [], refetch: refetchWeeklyPlans } = useGetWeeklyShiftPlanQuery(
-    { shopId, weekStartDate },
-    { skip: !shopId || !weekStartDate },
-  );
-  const [upsertWeeklyPlan] = useUpsertWeeklyShiftPlanMutation();
-
-  const activeShifts = useMemo(() => shifts.filter(shift => shift.active), [shifts]);
+  const { data: shiftTemplates = [] } = useGetShiftTemplatesQuery(shopId, { skip: !shopId });
   const activeEmployees = useMemo(() => employees.filter(employee => employee.status === 'active'), [employees]);
-  const weeklyPlanningEmployees = useMemo(
-    () => activeEmployees.filter(employee => !employee.defaultShiftId),
-    [activeEmployees],
-  );
-  const fixedShiftEmployees = useMemo(
-    () => activeEmployees.filter(employee => !!employee.defaultShiftId),
-    [activeEmployees],
-  );
-  const shiftById = useMemo(() => new Map(shifts.map(shift => [shift.id, shift])), [shifts]);
-
-  const planByEmployeeAndDay = useMemo(() => {
-    return weeklyPlans.reduce<Record<string, string>>((acc, item) => {
-      acc[`${item.employeeId}-${item.dayOfWeek}`] = item.shiftId;
-      return acc;
-    }, {});
-  }, [weeklyPlans]);
-
-  const plannerRows = useMemo(() => {
-    if (modeFilter === 'weekly') {
-      return weeklyPlanningEmployees;
-    }
-    if (modeFilter === 'fixed') {
-      return fixedShiftEmployees;
-    }
-    return activeEmployees;
-  }, [activeEmployees, fixedShiftEmployees, modeFilter, weeklyPlanningEmployees]);
-
   const selectedEmployee = useMemo(
-    () => activeEmployees.find(employee => employee.id === planEmployeeId),
-    [activeEmployees, planEmployeeId],
+    () => activeEmployees.find(employee => employee.id === selectedStaffId),
+    [activeEmployees, selectedStaffId],
   );
-  const selectedShift = useMemo(() => activeShifts.find(shift => shift.id === planShiftId), [activeShifts, planShiftId]);
+  const { data: savedDaysResponse, isFetching: loadingPlan } = useGetStaffWeeklyShiftPlanByStaffQuery(
+    { shopId, staffId: selectedStaffId },
+    { skip: !shopId || !selectedStaffId },
+  );
+  const [saveWeeklyPlan] = useSaveStaffWeeklyShiftPlanV2Mutation();
+  const shiftById = useMemo(() => new Map(shiftTemplates.map(shift => [shift.id, shift])), [shiftTemplates]);
+  const savedDays = savedDaysResponse ?? EMPTY_WEEKLY_SHIFT_DAYS;
+
+  useEffect(() => {
+    if (!selectedStaffId && activeEmployees.length) {
+      setSelectedStaffId(activeEmployees[0].id);
+    }
+  }, [activeEmployees, selectedStaffId]);
+
+  useEffect(() => {
+    const nextDraftDays = !selectedStaffId
+      ? buildEmptyWeeklyPlan(shopId, '')
+      : !savedDays.length
+        ? buildEmptyWeeklyPlan(shopId, selectedStaffId)
+        : normalizeWeeklyPlanDays(savedDays, shopId, selectedStaffId);
+
+    setDraftDays(current => (areWeeklyPlanDaysEqual(current, nextDraftDays) ? current : nextDraftDays));
+  }, [savedDays, selectedStaffId, shopId]);
+
+  const workingDayCount = useMemo(() => draftDays.filter(item => !item.isOff && item.shiftId).length, [draftDays]);
+  const offDayCount = useMemo(() => draftDays.filter(item => item.isOff).length, [draftDays]);
+
+  const updateDraftDay = (dayOfWeek: number, updater: (current: StaffWeeklyShiftDay) => StaffWeeklyShiftDay) => {
+    setDraftDays(current =>
+      current.map(item => (item.dayOfWeek === dayOfWeek ? updater(item) : item)),
+    );
+  };
+
+  const onSelectShift = (dayOfWeek: number, shiftId: string) => {
+    updateDraftDay(dayOfWeek, current => ({
+      ...current,
+      shiftId,
+      isOff: false,
+    }));
+  };
+
+  const onMarkOffDay = (dayOfWeek: number) => {
+    updateDraftDay(dayOfWeek, current => ({
+      ...current,
+      shiftId: null,
+      isOff: !current.isOff,
+    }));
+  };
 
   const onSaveWeeklyPlan = async () => {
-    if (!shopId) {
+    if (!shopId || !selectedStaffId) {
+      Alert.alert('Validation', 'Select a staff member first.');
       return;
     }
-    if (!planEmployeeId || !planShiftId || !weekStartDate) {
-      Alert.alert('Validation', 'Select week start date, staff, shift and day.');
+
+    const hasWorkingDay = draftDays.some(item => !item.isOff && item.shiftId);
+    if (!hasWorkingDay) {
+      Alert.alert('Validation', 'Assign at least one working day before saving.');
       return;
     }
-    if (selectedEmployee?.defaultShiftId) {
-      Alert.alert('Fixed Shift Staff', 'This staff has a fixed shift. Update shift in Staff Profile instead of weekly planner.');
+
+    const hasIncompleteDay = draftDays.some(item => !item.isOff && !item.shiftId);
+    if (hasIncompleteDay) {
+      Alert.alert('Validation', 'Each day must have a shift assigned or be marked as off.');
       return;
     }
+
     try {
       setSavingPlan(true);
-      await upsertWeeklyPlan({
+      await saveWeeklyPlan({
         shopId,
-        weekStartDate,
-        employeeId: planEmployeeId,
-        shiftId: planShiftId,
-        dayOfWeek: planDay,
+        staffId: selectedStaffId,
+        days: draftDays.map(item => ({
+          dayOfWeek: item.dayOfWeek,
+          shiftId: item.shiftId,
+          isOff: item.isOff,
+        })),
       }).unwrap();
-      await refetchWeeklyPlans();
-      Alert.alert('Saved', 'Weekly shift plan updated.');
+      Alert.alert('Saved', 'Weekly Shift Plan Saved');
     } catch (error) {
       Alert.alert('Save failed', (error as Error).message);
     } finally {
@@ -302,202 +507,139 @@ function WeeklyShiftPlannerScreen({ navigation }: { navigation: any }) {
     }
   };
 
-  const onWeekDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
-    if (Platform.OS === 'android') {
-      setShowWeekDatePicker(false);
-    }
-    if (event.type !== 'set' || !selectedDate) {
-      return;
-    }
-    const monday = dayjs(selectedDate).startOf('week').add(1, 'day').format('YYYY-MM-DD');
-    setWeekStartDate(monday);
-  };
-
   return (
     <View style={styles.page}>
-      <FlatList
-        data={plannerRows}
-        keyExtractor={item => item.id}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        ListHeaderComponent={
-          <View style={styles.headerBlock}>
-            <View style={styles.formHeader}>
-              <Text style={styles.formTitle}>Weekly Shift Planner</Text>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <ScrollView
+        contentContainerStyle={[styles.editListContent, { paddingTop: Math.max(insets.top + 38, 66) }]}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.headerBlock}>
+          <View style={styles.staffFormHero}>
+            <View style={styles.staffFormHeroTop}>
+              <View style={styles.staffFormBadge}>
+                <Text style={styles.staffFormBadgeText}>Weekly Planner</Text>
+              </View>
               <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
                 <Text style={styles.closeText}>Close</Text>
               </Pressable>
             </View>
 
-            <View style={styles.countRow}>
-              <CountChip label="Active Staff" value={`${activeEmployees.length}`} />
-              <CountChip label="Weekly Planning" value={`${weeklyPlanningEmployees.length}`} />
-              <CountChip label="Fixed Shift" value={`${fixedShiftEmployees.length}`} />
+            <Text style={styles.formTitle}>Weekly Shift Planner</Text>
+            <Text style={styles.staffFormIntro}>
+              Select one staff member, then assign an existing shift or mark an off day for each weekday from Monday to Sunday.
+            </Text>
+
+            <View style={styles.staffFormHeroStats}>
+              <View style={styles.staffFormHeroStatCard}>
+                <Text style={styles.staffFormHeroStatLabel}>Active Staff</Text>
+                <Text style={styles.staffFormHeroStatValue}>{activeEmployees.length}</Text>
+              </View>
+              <View style={styles.staffFormHeroStatCard}>
+                <Text style={styles.staffFormHeroStatLabel}>Shift Templates</Text>
+                <Text style={styles.staffFormHeroStatValue}>{shiftTemplates.length}</Text>
+              </View>
+              <View style={styles.staffFormHeroStatCard}>
+                <Text style={styles.staffFormHeroStatLabel}>Working Days</Text>
+                <Text style={styles.staffFormHeroStatValue}>{workingDayCount}</Text>
+              </View>
             </View>
+          </View>
 
-            <Card>
-              <Text style={styles.shiftTitle}>Plan Shift Day</Text>
-              <View style={styles.dateFieldWrap}>
-                <Text style={styles.dateLabel}>Week Start Date (Monday)</Text>
-                <Pressable
-                  style={({ pressed }) => [styles.dateInputButton, pressed && styles.dateInputButtonPressed]}
-                  onPress={() => setShowWeekDatePicker(true)}>
-                  <Text style={styles.dateValueText}>{formatDisplayDate(weekStartDate)}</Text>
-                </Pressable>
-                {showWeekDatePicker && (
-                  <View style={styles.datePickerWrap}>
-                    <DateTimePicker
-                      value={parseDate(weekStartDate)}
-                      mode="date"
-                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                      onChange={onWeekDateChange}
-                    />
-                    {Platform.OS === 'ios' && (
-                      <Pressable style={styles.dateDoneBtn} onPress={() => setShowWeekDatePicker(false)}>
-                        <Text style={styles.dateDoneText}>Done</Text>
-                      </Pressable>
-                    )}
-                  </View>
-                )}
-              </View>
-              <Text style={styles.shiftLabel}>Select Staff (weekly planning staff)</Text>
-              <View style={styles.selectionList}>
-                {weeklyPlanningEmployees.length === 0 ? (
-                  <Text style={styles.shiftHint}>No rotational staff found. Configure shifts in profile for fixed mode.</Text>
-                ) : (
-                  weeklyPlanningEmployees.map(emp => (
-                    <Pressable
-                      key={emp.id}
-                      style={[styles.selectionRow, planEmployeeId === emp.id ? styles.selectionRowSelected : undefined]}
-                      onPress={() => setPlanEmployeeId(emp.id)}>
-                      <Text style={[styles.selectionRowTitle, planEmployeeId === emp.id ? styles.selectionRowTitleSelected : undefined]}>
-                        {emp.employeeCode ? `${emp.employeeCode} - ` : ''}
-                        {emp.name}
-                      </Text>
-                      <Text style={styles.selectionRowMeta}>{emp.designation}</Text>
-                    </Pressable>
-                  ))
-                )}
-              </View>
-
-              <Text style={styles.shiftLabel}>Select Shift</Text>
-              <View style={styles.shiftGrid}>
-                {activeShifts.map(shift => (
-                  <Pressable
-                    key={shift.id}
-                    style={[styles.shiftOptionCard, planShiftId === shift.id ? styles.shiftOptionCardSelected : undefined]}
-                    onPress={() => setPlanShiftId(shift.id)}>
-                    <Text style={[styles.shiftOptionName, planShiftId === shift.id ? styles.shiftOptionNameSelected : undefined]} numberOfLines={2}>
-                      {shift.name}
-                    </Text>
-                    <Text style={styles.shiftOptionTime}>{shift.startTime}-{shift.endTime}</Text>
-                  </Pressable>
-                ))}
-              </View>
-              {selectedShift ? (
-                <Text style={styles.shiftHint}>{`Selected Shift: ${selectedShift.name} (${selectedShift.startTime}-${selectedShift.endTime})`}</Text>
+          <Card>
+            <Text style={styles.shiftTitle}>Select Staff Member</Text>
+            <View style={styles.selectionList}>
+              {activeEmployees.length === 0 ? (
+                <Text style={styles.shiftHint}>Add active staff before creating a weekly shift plan.</Text>
               ) : (
-                <Text style={styles.shiftHint}>Choose one shift to assign for selected day.</Text>
-              )}
-
-              <Text style={styles.shiftLabel}>Select Day</Text>
-              <View style={styles.dayGrid}>
-                {weekDays.map(day => (
+                activeEmployees.map(employee => (
                   <Pressable
-                    key={day}
-                    style={[styles.dayPill, planDay === day ? styles.dayPillSelected : undefined]}
-                    onPress={() => setPlanDay(day)}>
-                    <Text style={[styles.dayPillText, planDay === day ? styles.dayPillTextSelected : undefined]}>
-                      {day.toUpperCase()}
+                    key={employee.id}
+                    style={[styles.selectionRow, selectedStaffId === employee.id ? styles.selectionRowSelected : undefined]}
+                    onPress={() => setSelectedStaffId(employee.id)}>
+                    <Text style={[styles.selectionRowTitle, selectedStaffId === employee.id ? styles.selectionRowTitleSelected : undefined]}>
+                      {employee.employeeCode ? `${employee.employeeCode} - ` : ''}
+                      {employee.name}
                     </Text>
+                    <Text style={styles.selectionRowMeta}>{employee.designation}</Text>
                   </Pressable>
-                ))}
-              </View>
-              <PrimaryButton title={savingPlan ? 'Saving...' : 'Save Weekly Plan'} onPress={onSaveWeeklyPlan} loading={savingPlan} />
-              <Text style={styles.shiftHint}>{`${weeklyPlans.length} weekly rows available for selected week.`}</Text>
-            </Card>
+                ))
+              )}
+            </View>
+          </Card>
 
+          {selectedEmployee ? (
             <Card>
-              <Text style={styles.filterTitle}>View Mode</Text>
+              <Text style={styles.shiftTitle}>Plan for {selectedEmployee.name}</Text>
+              <Text style={styles.shiftHint}>
+                Each day must have a shift assignment or be marked as off. At least one working day is required.
+              </Text>
+              {loadingPlan ? <Text style={styles.shiftHint}>Loading saved weekly plan...</Text> : null}
+
               <View style={styles.modeColumn}>
-                <Pressable
-                  style={[styles.modeRow, modeFilter === 'all' ? styles.modeRowSelected : undefined]}
-                  onPress={() => setModeFilter('all')}>
-                  <Text style={[styles.modeRowTitle, modeFilter === 'all' ? styles.modeRowTitleSelected : undefined]}>All Staff</Text>
-                  <Text style={styles.modeRowMeta}>Shows both fixed and weekly planning staff.</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.modeRow, modeFilter === 'weekly' ? styles.modeRowSelected : undefined]}
-                  onPress={() => setModeFilter('weekly')}>
-                  <Text style={[styles.modeRowTitle, modeFilter === 'weekly' ? styles.modeRowTitleSelected : undefined]}>Weekly Planning</Text>
-                  <Text style={styles.modeRowMeta}>Staff without fixed shift in profile.</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.modeRow, modeFilter === 'fixed' ? styles.modeRowSelected : undefined]}
-                  onPress={() => setModeFilter('fixed')}>
-                  <Text style={[styles.modeRowTitle, modeFilter === 'fixed' ? styles.modeRowTitleSelected : undefined]}>Fixed Shift</Text>
-                  <Text style={styles.modeRowMeta}>Staff with default shift defined in profile.</Text>
-                </Pressable>
-              </View>
-            </Card>
-
-            <Card>
-              <Text style={styles.reportTitle}>Weekly Coverage</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={styles.weekGridHeaderRow}>
-                  <Text style={[styles.tableHead, styles.weekStaffCell]}>Staff</Text>
-                  {weekDays.map(day => (
-                    <Text key={day} style={[styles.tableHead, styles.weekDayCellHeader]}>
-                      {weekDayLabel[day]}
-                    </Text>
-                  ))}
-                  <Text style={[styles.tableHead, styles.weekModeCellHeader]}>Mode</Text>
-                </View>
-              </ScrollView>
-            </Card>
-            <Text style={styles.sectionCount}>{`${plannerRows.length} staff in selected mode`}</Text>
-          </View>
-        }
-        ListEmptyComponent={
-          <View style={styles.emptyWrap}>
-            <Text style={styles.emptyTitle}>No Staff Found</Text>
-            <Text style={styles.emptySub}>Add active staff to start shift planning.</Text>
-          </View>
-        }
-        renderItem={({ item }) => {
-          const isFixed = !!item.defaultShiftId;
-          return (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={styles.weekGridBodyRow}>
-                <View style={styles.weekStaffCell}>
-                  <Text style={styles.tableCell} numberOfLines={1}>
-                    {item.employeeCode ? `${item.employeeCode} - ` : ''}
-                    {item.name}
-                  </Text>
-                  <Text style={styles.weekSubCell} numberOfLines={1}>
-                    {item.designation}
-                  </Text>
-                </View>
-                {weekDays.map(day => {
-                  const weeklyShiftId = planByEmployeeAndDay[`${item.id}-${day}`];
-                  const effectiveShiftId = weeklyShiftId || item.defaultShiftId || '';
-                  const shiftName = effectiveShiftId ? shiftById.get(effectiveShiftId)?.name ?? effectiveShiftId : '-';
+                {plannerDays.map(day => {
+                  const currentDay = draftDays.find(item => item.dayOfWeek === day.dayOfWeek) ?? buildPlannerDay(shopId, selectedStaffId, day.dayOfWeek);
+                  const selectedShift = currentDay.shiftId ? shiftById.get(currentDay.shiftId) ?? null : null;
                   return (
-                    <Text key={`${item.id}-${day}`} style={styles.weekDayCell} numberOfLines={2}>
-                      {compactShiftLabel(shiftName)}
-                    </Text>
+                    <View key={day.dayOfWeek} style={styles.modeRow}>
+                      <View style={styles.topRow}>
+                        <View style={styles.headerTextWrap}>
+                          <Text style={styles.modeRowTitle}>{day.label}</Text>
+                          <Text style={styles.modeRowMeta}>
+                            {currentDay.isOff
+                              ? 'Marked as off day'
+                              : selectedShift
+                                ? `${selectedShift.name} (${formatTime12Hour(selectedShift.startTime)}-${formatTime12Hour(selectedShift.endTime)})`
+                                : 'No shift selected yet'}
+                          </Text>
+                        </View>
+                        <Pressable
+                          style={[styles.planChipSmall, currentDay.isOff ? styles.planChipSelected : undefined]}
+                          onPress={() => onMarkOffDay(day.dayOfWeek)}>
+                          <Text style={[styles.planChipText, currentDay.isOff ? styles.planChipTextSelected : undefined]}>
+                            Off Day
+                          </Text>
+                        </Pressable>
+                      </View>
+
+                      {!currentDay.isOff ? (
+                        <View style={styles.planWrap}>
+                          {shiftTemplates.map(shift => {
+                            const isSelected = currentDay.shiftId === shift.id;
+                            return (
+                              <Pressable
+                                key={`${day.dayOfWeek}-${shift.id}`}
+                                style={[styles.planChip, isSelected ? styles.planChipSelected : undefined]}
+                                onPress={() => onSelectShift(day.dayOfWeek, shift.id)}>
+                                <Text style={[styles.planChipText, isSelected ? styles.planChipTextSelected : undefined]}>
+                                  {shift.name}
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      ) : null}
+                    </View>
                   );
                 })}
-                <View style={styles.weekModeCellBody}>
-                  <Text style={[styles.modeChipText, isFixed ? styles.modeChipFixed : styles.modeChipWeekly]}>
-                    {isFixed ? 'FIXED' : 'WEEKLY'}
-                  </Text>
-                </View>
               </View>
-            </ScrollView>
-          );
-        }}
-      />
+
+              <PrimaryButton title={savingPlan ? 'Saving...' : 'Save Weekly Plan'} onPress={onSaveWeeklyPlan} loading={savingPlan} />
+              <Text style={styles.shiftHint}>{`${workingDayCount} working day(s) and ${offDayCount} off day(s) selected.`}</Text>
+            </Card>
+          ) : null}
+
+          <Card>
+            <Text style={styles.reportTitle}>Planner Rules</Text>
+            <Text style={styles.policyText}>1. Weekly Shift Planner does not create shifts.</Text>
+            <Text style={styles.policyText}>2. Only existing shift templates can be assigned.</Text>
+            <Text style={styles.policyText}>3. Off days are stored separately from shift assignments.</Text>
+          </Card>
+        </View>
+      </ScrollView>
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
     </View>
   );
 }
@@ -505,6 +647,7 @@ function WeeklyShiftPlannerScreen({ navigation }: { navigation: any }) {
 function AllStaffListScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | EmployeeStatus>('all');
   const [shiftTypeFilter, setShiftTypeFilter] = useState<'all' | 'weekly' | 'fixed'>('all');
@@ -534,27 +677,48 @@ function AllStaffListScreen({ navigation }: { navigation: any }) {
   }, [employees, query, shiftTypeFilter, statusFilter]);
 
   const activeCount = employees.filter(item => item.status === 'active').length;
-  const fixedCount = employees.filter(item => !!item.defaultShiftId).length;
-  const weeklyCount = employees.length - fixedCount;
+  const weeklyCount = employees.filter(item => !item.defaultShiftId).length;
+  const accessReadyCount = employees.filter(item => getEmployeeAuthStatus(item) === 'provisioned').length;
 
   return (
     <View style={styles.page}>
-      <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <ScrollView contentContainerStyle={[styles.editListContent, { paddingTop: Math.max(insets.top + 38, 66) }]} showsVerticalScrollIndicator={false}>
         <View style={styles.headerBlock}>
-          <View style={styles.formHeader}>
-            <Text style={styles.formTitle}>All Staff List</Text>
-            <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
-              <Text style={styles.closeText}>Close</Text>
-            </Pressable>
-          </View>
+          <View style={styles.staffFormHero}>
+            <View style={styles.staffFormHeroTop}>
+              <View style={styles.staffFormBadge}>
+                <Text style={styles.staffFormBadgeText}>Staff Directory</Text>
+              </View>
+              <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+                <Text style={styles.closeText}>Close</Text>
+              </Pressable>
+            </View>
 
-          <View style={styles.countRow}>
-            <CountChip label="Total" value={`${employees.length}`} />
-            <CountChip label="Active" value={`${activeCount}`} />
-            <CountChip label="Fixed Shift" value={`${fixedCount}`} />
+            <Text style={styles.formTitle}>All Staff List</Text>
+            <Text style={styles.staffFormIntro}>
+              Review the full staff directory with role, status, shift type, and service information in one place.
+            </Text>
+
+            <View style={styles.staffFormHeroStats}>
+              <View style={styles.staffFormHeroStatCard}>
+                <Text style={styles.staffFormHeroStatLabel}>Total</Text>
+                <Text style={styles.staffFormHeroStatValue}>{employees.length}</Text>
+              </View>
+              <View style={styles.staffFormHeroStatCard}>
+                <Text style={styles.staffFormHeroStatLabel}>Active</Text>
+                <Text style={styles.staffFormHeroStatValue}>{activeCount}</Text>
+              </View>
+              <View style={styles.staffFormHeroStatCard}>
+                <Text style={styles.staffFormHeroStatLabel}>Login Ready</Text>
+                <Text style={styles.staffFormHeroStatValue}>{accessReadyCount}</Text>
+              </View>
+            </View>
           </View>
 
           <Card>
+            <Text style={styles.formSectionTitle}>Search & Filter</Text>
+              <Text style={styles.formSectionSubtitle}>Use the filters below to narrow the staff directory by status and shift type.</Text>
             <Field label="Search Staff" value={query} onChangeText={setQuery} placeholder="Code / name / phone / designation" />
             <Text style={styles.filterTitle}>Status Filter</Text>
             <View style={styles.filterWrap}>
@@ -606,6 +770,7 @@ function AllStaffListScreen({ navigation }: { navigation: any }) {
                 <Text style={[styles.tableHead, styles.fullColName]}>Name</Text>
                 <Text style={[styles.tableHead, styles.fullColRole]}>Role</Text>
                 <Text style={[styles.tableHead, styles.fullColStatus]}>Status</Text>
+                <Text style={[styles.tableHead, styles.fullColAuth]}>Login Access</Text>
                 <Text style={[styles.tableHead, styles.fullColShift]}>Shift</Text>
                 <Text style={[styles.tableHead, styles.fullColService]}>Service</Text>
                 <Text style={[styles.tableHead, styles.fullColAction]}>Edit</Text>
@@ -616,6 +781,7 @@ function AllStaffListScreen({ navigation }: { navigation: any }) {
                   const isFixed = !!item.defaultShiftId;
                   const service = getServiceDuration(item);
                   const shiftName = item.defaultShiftId ? shiftById.get(item.defaultShiftId)?.name ?? item.defaultShiftId : 'Weekly Planner';
+                  const authStatusStyles = getEmployeeAuthStyleKeys(item);
                   return (
                     <View key={item.id} style={styles.fullTableBodyRow}>
                       <Text style={[styles.tableCell, styles.fullColCode]} numberOfLines={1}>
@@ -635,6 +801,16 @@ function AllStaffListScreen({ navigation }: { navigation: any }) {
                       <Text style={[styles.tableCell, styles.fullColStatus, item.status === 'active' ? styles.activeText : styles.inactiveText]} numberOfLines={1}>
                         {item.status.toUpperCase()}
                       </Text>
+                      <View style={styles.fullColAuth}>
+                        <View style={[styles.authPill, styles[authStatusStyles.pill]]}>
+                          <Text style={[styles.authPillText, styles[authStatusStyles.text]]} numberOfLines={1}>
+                            {getEmployeeAuthStatusLabel(item)}
+                          </Text>
+                        </View>
+                        <Text style={styles.weekSubCell} numberOfLines={1}>
+                          {item.loginEmail?.trim() ? item.loginEmail : 'No login email'}
+                        </Text>
+                      </View>
                       <View style={styles.fullColShift}>
                         <Text style={styles.tableCell} numberOfLines={1}>
                           {shiftName}
@@ -665,6 +841,10 @@ function AllStaffListScreen({ navigation }: { navigation: any }) {
           </View>
         ) : null}
       </ScrollView>
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
     </View>
   );
 }
@@ -672,10 +852,15 @@ function AllStaffListScreen({ navigation }: { navigation: any }) {
 function StaffEditTableScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | EmployeeStatus>('all');
   const { data: employees = [], isLoading } = useGetEmployeesQuery(shopId, { skip: !shopId });
   const [deleteEmployee, { isLoading: deleting }] = useDeleteEmployeeMutation();
+  const accessConfiguredCount = useMemo(
+    () => employees.filter(item => getEmployeeAuthStatus(item) !== 'not_created').length,
+    [employees],
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -713,20 +898,48 @@ function StaffEditTableScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={styles.page}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       <FlatList
         data={filtered}
         keyExtractor={item => item.id}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.editListContent, { paddingTop: Math.max(insets.top + 38, 66) }]}
         ListHeaderComponent={
           <View style={styles.headerBlock}>
-            <View style={styles.formHeader}>
+            <View style={styles.staffFormHero}>
+              <View style={styles.staffFormHeroTop}>
+                <View style={styles.staffFormBadge}>
+                  <Text style={styles.staffFormBadgeText}>Staff Update</Text>
+                </View>
+                <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+                  <Text style={styles.closeText}>Close</Text>
+                </Pressable>
+              </View>
+
               <Text style={styles.formTitle}>Edit Staff Details</Text>
-              <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
-                <Text style={styles.closeText}>Close</Text>
-              </Pressable>
+              <Text style={styles.staffFormIntro}>
+                Search staff records, review status, and open a profile for updates without changing the existing workflow.
+              </Text>
+
+              <View style={styles.staffFormHeroStats}>
+                <View style={styles.staffFormHeroStatCard}>
+                  <Text style={styles.staffFormHeroStatLabel}>Total Staff</Text>
+                  <Text style={styles.staffFormHeroStatValue}>{employees.length}</Text>
+                </View>
+                <View style={styles.staffFormHeroStatCard}>
+                  <Text style={styles.staffFormHeroStatLabel}>Filtered Results</Text>
+                  <Text style={styles.staffFormHeroStatValue}>{isLoading ? '...' : filtered.length}</Text>
+                </View>
+                <View style={styles.staffFormHeroStatCard}>
+                  <Text style={styles.staffFormHeroStatLabel}>Access Setup</Text>
+                  <Text style={styles.staffFormHeroStatValue}>{accessConfiguredCount}</Text>
+                </View>
+              </View>
             </View>
+
             <Card>
+              <Text style={styles.formSectionTitle}>Search & Filter</Text>
+              <Text style={styles.formSectionSubtitle}>Find the staff member you want to update using name, code, phone number, or role.</Text>
               <Field label="Search Staff" value={query} onChangeText={setQuery} placeholder="Code / name / phone / designation" />
               <Text style={styles.filterTitle}>Status Filter</Text>
               <View style={styles.filterWrap}>
@@ -742,14 +955,7 @@ function StaffEditTableScreen({ navigation }: { navigation: any }) {
                 ))}
               </View>
             </Card>
-            <Card>
-              <View style={styles.tableHeaderRow}>
-                <Text style={[styles.tableHead, styles.colCode]}>No.</Text>
-                <Text style={[styles.tableHead, styles.colName]}>Name</Text>
-                <Text style={[styles.tableHead, styles.colStatus]}>Status</Text>
-                <Text style={[styles.tableHead, styles.colAction]}>Actions</Text>
-              </View>
-            </Card>
+
             <Text style={styles.sectionCount}>
               {isLoading ? 'Loading staff...' : `${filtered.length} staff members`}
               {deleting ? ' | Deleting...' : ''}
@@ -765,27 +971,59 @@ function StaffEditTableScreen({ navigation }: { navigation: any }) {
           ) : null
         }
         renderItem={({ item, index }) => (
-          <View style={styles.staffTableRow}>
-            <Text style={[styles.tableCell, styles.colCode]} numberOfLines={1}>
-              {index + 1}
-            </Text>
-            <Text style={[styles.tableCell, styles.colName]} numberOfLines={1}>
-              {item.name}
-            </Text>
-            <Text style={[styles.tableCell, styles.colStatus, item.status === 'active' ? styles.activeText : styles.inactiveText]} numberOfLines={1}>
-              {item.status.toUpperCase()}
-            </Text>
-            <View style={[styles.colAction, styles.rowActions]}>
-              <Pressable style={styles.iconActionBtn} onPress={() => navigation.navigate('StaffForm', { mode: 'edit', employee: item })}>
-                <Text style={styles.iconActionText}>✎</Text>
+          <Card>
+            <View style={styles.staffEditRowTop}>
+              <View style={styles.staffEditIdentity}>
+                <Text style={styles.staffEditCode}>#{item.employeeCode || index + 1}</Text>
+                <Text style={styles.staffEditName} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                <Text style={styles.staffEditMeta} numberOfLines={1}>
+                  {item.designation} | {item.phone}
+                </Text>
+                <View style={styles.staffMetaPillRow}>
+                  <View style={[styles.authPill, styles[getEmployeeAuthStyleKeys(item).pill]]}>
+                    <Text style={[styles.authPillText, styles[getEmployeeAuthStyleKeys(item).text]]}>
+                      {getEmployeeAuthStatusLabel(item)}
+                    </Text>
+                  </View>
+                  <Text style={styles.staffMetaInlineText} numberOfLines={1}>
+                    {item.loginEmail?.trim() ? item.loginEmail : 'No login email'}
+                  </Text>
+                </View>
+              </View>
+              <View
+                style={[
+                  styles.staffEditStatusPill,
+                  item.status === 'active' ? styles.staffEditStatusPillActive : styles.staffEditStatusPillInactive,
+                ]}>
+                <Text
+                  style={[
+                    styles.staffEditStatusText,
+                    item.status === 'active' ? styles.staffEditStatusTextActive : styles.staffEditStatusTextInactive,
+                  ]}>
+                  {item.status === 'active' ? 'Active' : 'Inactive'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.staffEditActionRow}>
+              <Pressable style={styles.staffEditPrimaryBtn} onPress={() => navigation.navigate('StaffForm', { mode: 'edit', employee: item })}>
+                <Ionicons name="create-outline" size={18} color="#ffffff" />
+                <Text style={styles.staffEditPrimaryBtnText}>Open Edit Form</Text>
               </Pressable>
-              <Pressable style={[styles.iconActionBtn, styles.iconDeleteBtn]} onPress={() => onDelete(item)}>
-                <Text style={[styles.iconActionText, styles.iconDeleteText]}>🗑</Text>
+              <Pressable style={styles.staffEditDeleteBtn} onPress={() => onDelete(item)}>
+                <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                <Text style={styles.staffEditDeleteBtnText}>Delete</Text>
               </Pressable>
             </View>
-          </View>
+          </Card>
         )}
       />
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
     </View>
   );
 }
@@ -793,6 +1031,7 @@ function StaffEditTableScreen({ navigation }: { navigation: any }) {
 function StaffDeactivateTableScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | EmployeeStatus>('all');
   const { data: employees = [], isLoading } = useGetEmployeesQuery(shopId, { skip: !shopId });
@@ -845,20 +1084,42 @@ function StaffDeactivateTableScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={styles.page}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       <FlatList
         data={filtered}
         keyExtractor={item => item.id}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.editListContent, { paddingTop: Math.max(insets.top + 38, 66) }]}
         ListHeaderComponent={
           <View style={styles.headerBlock}>
-            <View style={styles.formHeader}>
-              <Text style={styles.formTitle}>Mark De-activate Staff</Text>
-              <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
-                <Text style={styles.closeText}>Close</Text>
-              </Pressable>
+            <View style={styles.staffFormHero}>
+              <View style={styles.staffFormHeroTop}>
+                <View style={styles.staffFormBadge}>
+                  <Text style={styles.staffFormBadgeText}>Status Control</Text>
+                </View>
+                <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+                  <Text style={styles.closeText}>Close</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.formTitle}>Activate or Deactivate Staff</Text>
+              <Text style={styles.staffFormIntro}>
+                Review the current status of each staff member and update activation safely without changing any other profile data.
+              </Text>
+
+              <View style={styles.staffFormHeroStats}>
+                <View style={styles.staffFormHeroStatCard}>
+                  <Text style={styles.staffFormHeroStatLabel}>Total Staff</Text>
+                  <Text style={styles.staffFormHeroStatValue}>{employees.length}</Text>
+                </View>
+                <View style={styles.staffFormHeroStatCard}>
+                  <Text style={styles.staffFormHeroStatLabel}>Filtered Results</Text>
+                  <Text style={styles.staffFormHeroStatValue}>{isLoading ? '...' : filtered.length}</Text>
+                </View>
+              </View>
             </View>
             <Card>
+              <Text style={styles.formSectionTitle}>Search & Filter</Text>
+              <Text style={styles.formSectionSubtitle}>Search staff and filter by status before changing activation.</Text>
               <Field label="Search Staff" value={query} onChangeText={setQuery} placeholder="Code / name / phone / designation" />
               <Text style={styles.filterTitle}>Status Filter</Text>
               <View style={styles.filterWrap}>
@@ -872,14 +1133,6 @@ function StaffDeactivateTableScreen({ navigation }: { navigation: any }) {
                     </Text>
                   </Pressable>
                 ))}
-              </View>
-            </Card>
-            <Card>
-              <View style={styles.tableHeaderRow}>
-                <Text style={[styles.tableHead, styles.colCode]}>No.</Text>
-                <Text style={[styles.tableHead, styles.colName]}>Name</Text>
-                <Text style={[styles.tableHead, styles.colStatus]}>Status</Text>
-                <Text style={[styles.tableHead, styles.colAction]}>Actions</Text>
               </View>
             </Card>
             <Text style={styles.sectionCount}>
@@ -897,30 +1150,51 @@ function StaffDeactivateTableScreen({ navigation }: { navigation: any }) {
           ) : null
         }
         renderItem={({ item, index }) => (
-          <View style={styles.staffTableRow}>
-            <Text style={[styles.tableCell, styles.colCode]} numberOfLines={1}>
-              {index + 1}
-            </Text>
-            <Text style={[styles.tableCell, styles.colName]} numberOfLines={1}>
-              {item.name}
-            </Text>
-            <Text style={[styles.tableCell, styles.colStatus, item.status === 'active' ? styles.activeText : styles.inactiveText]} numberOfLines={1}>
-              {item.status.toUpperCase()}
-            </Text>
-            <View style={[styles.colAction, styles.rowActions]}>
+          <Card>
+            <View style={styles.staffEditRowTop}>
+              <View style={styles.staffEditIdentity}>
+                <Text style={styles.staffEditCode}>#{item.employeeCode || index + 1}</Text>
+                <Text style={styles.staffEditName} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                <Text style={styles.staffEditMeta} numberOfLines={1}>
+                  {item.designation} | {item.phone}
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.staffEditStatusPill,
+                  item.status === 'active' ? styles.staffEditStatusPillActive : styles.staffEditStatusPillInactive,
+                ]}>
+                <Text
+                  style={[
+                    styles.staffEditStatusText,
+                    item.status === 'active' ? styles.staffEditStatusTextActive : styles.staffEditStatusTextInactive,
+                  ]}>
+                  {item.status === 'active' ? 'Active' : 'Inactive'}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.staffEditActionRow}>
               {item.status === 'active' ? (
-                <Pressable style={[styles.iconActionBtn, styles.iconDeactivateBtn]} onPress={() => onToggleStatus(item, 'inactive')}>
-                  <Text style={[styles.iconActionText, styles.iconDeactivateText]}>⛔</Text>
+                <Pressable style={styles.staffDeactivateBtnModern} onPress={() => onToggleStatus(item, 'inactive')}>
+                  <Ionicons name="ban-outline" size={18} color="#ffffff" />
+                  <Text style={styles.staffDeactivateBtnModernText}>Deactivate</Text>
                 </Pressable>
               ) : (
-                <Pressable style={[styles.iconActionBtn, styles.iconActivateBtn]} onPress={() => onToggleStatus(item, 'active')}>
-                  <Text style={[styles.iconActionText, styles.iconActivateText]}>✓</Text>
+                <Pressable style={styles.staffActivateBtnModern} onPress={() => onToggleStatus(item, 'active')}>
+                  <Ionicons name="checkmark-circle-outline" size={18} color="#ffffff" />
+                  <Text style={styles.staffDeactivateBtnModernText}>Activate</Text>
                 </Pressable>
               )}
             </View>
-          </View>
+          </Card>
         )}
       />
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
     </View>
   );
 }
@@ -928,21 +1202,35 @@ function StaffDeactivateTableScreen({ navigation }: { navigation: any }) {
 function StaffShiftScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
+  const [editingShift, setEditingShift] = useState<ShiftTemplate | null>(null);
   const [shiftName, setShiftName] = useState('');
   const [shiftStart, setShiftStart] = useState('07:00');
   const [shiftEnd, setShiftEnd] = useState('15:30');
+  const [durationHours, setDurationHours] = useState('8');
+  const [graceTime, setGraceTime] = useState('10');
+  const [lateRuleMinutes, setLateRuleMinutes] = useState('15');
+  const [halfDayHours, setHalfDayHours] = useState('4');
   const [showShiftStartPicker, setShowShiftStartPicker] = useState(false);
   const [showShiftEndPicker, setShowShiftEndPicker] = useState(false);
   const [savingShift, setSavingShift] = useState(false);
-  const { data: shifts = [], isLoading, refetch: refetchShifts } = useGetShiftsQuery(shopId, { skip: !shopId });
-  const [upsertShift] = useUpsertShiftMutation();
+  const { data: shiftTemplates = [], isLoading } = useGetShiftTemplatesQuery(shopId, { skip: !shopId });
+  const [createShiftTemplate] = useCreateShiftTemplateMutation();
+  const [updateShiftTemplate] = useUpdateShiftTemplateMutation();
+  const [deleteShiftTemplate] = useDeleteShiftTemplateMutation();
 
-  const durationLabel = useMemo(() => {
-    const d = calculateShiftHours(shiftStart, shiftEnd);
-    return d === null ? '-' : `${d} hrs`;
-  }, [shiftStart, shiftEnd]);
+  const resetShiftForm = () => {
+    setEditingShift(null);
+    setShiftName('');
+    setShiftStart('07:00');
+    setShiftEnd('15:30');
+    setDurationHours('8');
+    setGraceTime('10');
+    setLateRuleMinutes('15');
+    setHalfDayHours('4');
+  };
 
-  const onCreateShift = async () => {
+  const onCreateOrUpdateShift = async () => {
     if (!shopId) {
       return;
     }
@@ -950,39 +1238,47 @@ function StaffShiftScreen({ navigation }: { navigation: any }) {
       Alert.alert('Validation', 'Shift name is required.');
       return;
     }
-    const duration = calculateShiftHours(shiftStart, shiftEnd);
-    if (duration === null || duration <= 0) {
-      Alert.alert('Validation', 'Enter valid Start and End time in 24-hour format.');
+    const timeDuration = calculateTemplateShiftHours(shiftStart, shiftEnd);
+    if (timeDuration === null || timeDuration <= 0) {
+      Alert.alert('Validation', 'Start time and end time must define a valid shift duration.');
+      return;
+    }
+    const computedEndTime = calculateEndTimeFromDuration(shiftStart, Number(durationHours));
+    if (
+      !isPositiveNumeric(durationHours) ||
+      !isNonNegativeNumeric(graceTime) ||
+      !isNonNegativeNumeric(lateRuleMinutes) ||
+      !isNonNegativeNumeric(halfDayHours)
+    ) {
+      Alert.alert('Validation', 'Duration must be greater than 0, and the other rules must be valid non-negative numbers.');
+      return;
+    }
+    if (!computedEndTime || computedEndTime !== shiftEnd) {
+      Alert.alert('Validation', 'Duration must match the selected start and end time.');
       return;
     }
     try {
       setSavingShift(true);
-      const shiftId = buildShiftId(shiftName, shiftStart, shiftEnd);
-      const saveStatus = await withActionDeadline(
-        upsertShiftWithRetry(
-          upsertShift,
-          {
-            id: shiftId,
-            shopId,
-            name: shiftName.trim(),
-            startTime: shiftStart.trim(),
-            endTime: shiftEnd.trim(),
-            durationHours: duration,
-            active: true,
-          },
-          { maxAttempts: 2, attemptTimeoutMs: 7000, retryDelayMs: 600 },
-        ),
-        12000,
-        'pending',
-      );
-      refetchShifts();
-      setShiftName('');
-      Alert.alert(
-        saveStatus === 'saved' ? 'Saved' : 'Syncing',
-        saveStatus === 'saved'
-          ? 'Shift created successfully.'
-          : 'Shift request queued. It will sync automatically when Firestore is reachable.',
-      );
+      const payload = {
+        id: editingShift?.id,
+        shopId,
+        name: shiftName.trim(),
+        startTime: shiftStart.trim(),
+        endTime: shiftEnd.trim(),
+        durationHours: Number(durationHours),
+        graceTime: Number(graceTime),
+        lateRuleMinutes: Number(lateRuleMinutes),
+        halfDayHours: Number(halfDayHours),
+      };
+
+      if (editingShift) {
+        await updateShiftTemplate(payload).unwrap();
+        Alert.alert('Saved', 'Shift updated successfully.');
+      } else {
+        await createShiftTemplate(payload).unwrap();
+        Alert.alert('Saved', 'Shift Created Successfully');
+      }
+      resetShiftForm();
     } catch (error) {
       Alert.alert('Save failed', (error as Error).message);
     } finally {
@@ -990,71 +1286,40 @@ function StaffShiftScreen({ navigation }: { navigation: any }) {
     }
   };
 
-  const onLoadDefaultShifts = async () => {
+  const onEditShift = (shift: ShiftTemplate) => {
+    setEditingShift(shift);
+    setShiftName(shift.name);
+    setShiftStart(shift.startTime);
+    setShiftEnd(shift.endTime);
+    setDurationHours(String(shift.durationHours));
+    setGraceTime(String(shift.graceTime));
+    setLateRuleMinutes(String(shift.lateRuleMinutes));
+    setHalfDayHours(String(shift.halfDayHours));
+  };
+
+  const onDeleteShift = (shift: ShiftTemplate) => {
     if (!shopId) {
       return;
     }
-    const defaults = [
-      { name: 'I Shift', startTime: '07:00', endTime: '15:30' },
-      { name: 'II Shift', startTime: '15:30', endTime: '24:00' },
-      { name: 'III Shift', startTime: '24:00', endTime: '07:00' },
-      { name: 'General-8 Shift', startTime: '09:00', endTime: '17:00' },
-      { name: 'General-12 Shift', startTime: '09:00', endTime: '21:00' },
-    ];
-    try {
-      setSavingShift(true);
-      const results = await Promise.allSettled(
-        defaults.map(shift =>
-          withActionDeadline(
-            upsertShiftWithRetry(
-              upsertShift,
-              {
-                id: buildShiftId(shift.name, shift.startTime, shift.endTime),
-                shopId,
-                ...shift,
-                durationHours: calculateShiftHours(shift.startTime, shift.endTime) ?? 0,
-                active: true,
-              },
-              { maxAttempts: 2, attemptTimeoutMs: 7000, retryDelayMs: 600 },
-            ),
-            12000,
-            'pending',
-          ),
-        ),
-      );
-      refetchShifts();
 
-      const failed = defaults.filter((_, i) => results[i]?.status === 'rejected').map(s => s.name);
-      const pending = defaults
-        .filter((_, i) => results[i]?.status === 'fulfilled' && results[i]?.value === 'pending')
-        .map(s => s.name);
-
-      if (failed.length === 0 && pending.length === 0) {
-        Alert.alert('Saved', 'Standard shifts loaded successfully.');
-      } else if (failed.length === 0) {
-        Alert.alert('Syncing', `Queued ${pending.length} shifts. They will appear automatically after sync.`);
-      } else if (failed.length === defaults.length) {
-        Alert.alert('Save failed', 'Could not save standard shifts. Check your connection and retry.');
-      } else {
-        Alert.alert('Partial Success', `Failed to save: ${failed.join(', ')}.`);
-      }
-    } catch (error) {
-      Alert.alert('Save failed', (error as Error).message);
-    } finally {
-      setSavingShift(false);
-    }
-  };
-
-  const onToggleShiftActive = async (shift: { id: string; shopId: string; name: string; startTime: string; endTime: string; durationHours: number; active: boolean }) => {
-    try {
-      await upsertShift({
-        ...shift,
-        active: !shift.active,
-      }).unwrap();
-      refetchShifts();
-    } catch (error) {
-      Alert.alert('Update failed', (error as Error).message);
-    }
+    Alert.alert('Delete Shift', `Delete ${shift.name}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteShiftTemplate({ shopId, shiftId: shift.id }).unwrap();
+            if (editingShift?.id === shift.id) {
+              resetShiftForm();
+            }
+            Alert.alert('Deleted', 'Shift deleted successfully.');
+          } catch (error) {
+            Alert.alert('Delete failed', (error as Error).message);
+          }
+        },
+      },
+    ]);
   };
 
   const onShiftStartChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
@@ -1064,7 +1329,12 @@ function StaffShiftScreen({ navigation }: { navigation: any }) {
     if (event.type !== 'set' || !selectedDate) {
       return;
     }
-    setShiftStart(dayjs(selectedDate).format('HH:mm'));
+    const nextStart = dayjs(selectedDate).format('HH:mm');
+    setShiftStart(nextStart);
+    const nextDuration = calculateTemplateShiftHours(nextStart, shiftEnd);
+    if (nextDuration !== null) {
+      setDurationHours(formatDurationHours(nextDuration));
+    }
   };
 
   const onShiftEndChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
@@ -1074,178 +1344,237 @@ function StaffShiftScreen({ navigation }: { navigation: any }) {
     if (event.type !== 'set' || !selectedDate) {
       return;
     }
-    setShiftEnd(dayjs(selectedDate).format('HH:mm'));
+    const nextEnd = dayjs(selectedDate).format('HH:mm');
+    setShiftEnd(nextEnd);
+    const nextDuration = calculateTemplateShiftHours(shiftStart, nextEnd);
+    if (nextDuration !== null) {
+      setDurationHours(formatDurationHours(nextDuration));
+    }
+  };
+
+  const onDurationChange = (value: string) => {
+    setDurationHours(value);
+    if (!isPositiveNumeric(value)) {
+      return;
+    }
+
+    const nextEnd = calculateEndTimeFromDuration(shiftStart, Number(value));
+    if (nextEnd) {
+      setShiftEnd(nextEnd);
+    }
   };
 
   return (
     <View style={styles.page}>
-      <FlatList
-        data={shifts}
-        keyExtractor={item => item.id}
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.listContent}
-        ListHeaderComponent={
-          <View style={styles.headerBlock}>
-            <View style={styles.formHeader}>
-              <Text style={styles.formTitle}>Create Shifts</Text>
+        contentContainerStyle={[styles.editListContent, { paddingTop: Math.max(insets.top + 38, 66) }]}>
+        <View style={styles.headerBlock}>
+          <View style={styles.staffFormHero}>
+            <View style={styles.staffFormHeroTop}>
+              <View style={styles.staffFormBadge}>
+                <Text style={styles.staffFormBadgeText}>Shift Setup</Text>
+              </View>
               <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
                 <Text style={styles.closeText}>Close</Text>
               </Pressable>
             </View>
 
-            <Card>
-              <Text style={styles.shiftTitle}>Shift Master Entry</Text>
-              <Field label="Shift Name" value={shiftName} onChangeText={setShiftName} placeholder="e.g. I Shift" />
-              <View style={styles.shiftTimeRow}>
-                <View style={styles.shiftField}>
-                  <View style={styles.dateFieldWrap}>
-                    <Text style={styles.dateLabel}>Start Time (24H)</Text>
-                    <Pressable
-                      style={({ pressed }) => [styles.dateInputButton, pressed && styles.dateInputButtonPressed]}
-                      onPress={() => setShowShiftStartPicker(true)}>
-                      <Text style={styles.dateValueText}>{shiftStart}</Text>
-                    </Pressable>
-                    {showShiftStartPicker && (
-                      <View style={styles.datePickerWrap}>
-                        <DateTimePicker
-                          value={parseTimeToDate(shiftStart)}
-                          mode="time"
-                          is24Hour
-                          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                          onChange={onShiftStartChange}
-                        />
-                        {Platform.OS === 'ios' && (
-                          <Pressable style={styles.dateDoneBtn} onPress={() => setShowShiftStartPicker(false)}>
-                            <Text style={styles.dateDoneText}>Done</Text>
-                          </Pressable>
-                        )}
-                      </View>
-                    )}
-                  </View>
-                </View>
-                <View style={styles.shiftField}>
-                  <View style={styles.dateFieldWrap}>
-                    <Text style={styles.dateLabel}>End Time (24H)</Text>
-                    <Pressable
-                      style={({ pressed }) => [styles.dateInputButton, pressed && styles.dateInputButtonPressed]}
-                      onPress={() => setShowShiftEndPicker(true)}>
-                      <Text style={styles.dateValueText}>{shiftEnd}</Text>
-                    </Pressable>
-                    {showShiftEndPicker && (
-                      <View style={styles.datePickerWrap}>
-                        <DateTimePicker
-                          value={parseTimeToDate(shiftEnd)}
-                          mode="time"
-                          is24Hour
-                          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                          onChange={onShiftEndChange}
-                        />
-                        {Platform.OS === 'ios' && (
-                          <Pressable style={styles.dateDoneBtn} onPress={() => setShowShiftEndPicker(false)}>
-                            <Text style={styles.dateDoneText}>Done</Text>
-                          </Pressable>
-                        )}
-                      </View>
-                    )}
-                  </View>
-                </View>
-              </View>
-              <Field label="Duration (Auto)" value={durationLabel} editable={false} />
-              <View style={styles.shiftBtnRow}>
-                <View style={styles.shiftBtn}>
-                  <PrimaryButton title={savingShift ? 'Saving...' : 'Save Shift'} onPress={onCreateShift} loading={savingShift} />
-                </View>
-                <Pressable style={[styles.defaultShiftBtn, savingShift && styles.defaultShiftBtnDisabled]} onPress={onLoadDefaultShifts} disabled={savingShift}>
-                  <Text style={styles.defaultShiftBtnText}>Load Standard Shifts</Text>
-                </Pressable>
-              </View>
-              <Text style={styles.shiftHint}>Standard: I, II, III, General-8, General-12.</Text>
-            </Card>
+            <Text style={styles.formTitle}>Create Shifts</Text>
+            <Text style={styles.staffFormIntro}>
+              Create reusable shift templates here. Weekly planner uses these templates later, but does not create or modify them.
+            </Text>
 
-            <Card>
-              <View style={styles.tableHeaderRow}>
-                <Text style={[styles.tableHead, styles.colCode]}>No.</Text>
-                <Text style={[styles.tableHead, styles.colName]}>Shift</Text>
-                <Text style={[styles.tableHead, styles.colStatus]}>Time</Text>
-                <Text style={[styles.tableHead, styles.colAction]}>Active</Text>
+            <View style={styles.staffFormHeroStats}>
+              <View style={styles.staffFormHeroStatCard}>
+                <Text style={styles.staffFormHeroStatLabel}>Total Shifts</Text>
+                <Text style={styles.staffFormHeroStatValue}>{isLoading ? '...' : shiftTemplates.length}</Text>
               </View>
-            </Card>
-            <Text style={styles.sectionCount}>{isLoading ? 'Loading shifts...' : `${shifts.length} shifts`}</Text>
+              <View style={styles.staffFormHeroStatCard}>
+                <Text style={styles.staffFormHeroStatLabel}>Default Duration</Text>
+                <Text style={styles.staffFormHeroStatValue}>{durationHours || '8'} hr</Text>
+              </View>
+            </View>
           </View>
-        }
-        ListEmptyComponent={
-          !isLoading ? (
+
+          <Card>
+            <Text style={styles.shiftTitle}>{editingShift ? 'Edit Shift Template' : 'Shift Master Entry'}</Text>
+            <Field label="Shift Name" value={shiftName} onChangeText={setShiftName} placeholder="e.g. Morning Shift" />
+            <View style={styles.shiftTimeRow}>
+              <View style={styles.shiftField}>
+                <View style={styles.dateFieldWrap}>
+                  <Text style={styles.dateLabel}>Start Time</Text>
+                  <Pressable
+                    style={({ pressed }) => [styles.dateInputButton, pressed && styles.dateInputButtonPressed]}
+                    onPress={() => setShowShiftStartPicker(true)}>
+                    <Text style={styles.dateValueText}>{formatTime12Hour(shiftStart)}</Text>
+                  </Pressable>
+                  {showShiftStartPicker && (
+                    <View style={styles.datePickerWrap}>
+                      <DateTimePicker
+                        value={parseTimeToDate(shiftStart)}
+                        mode="time"
+                        is24Hour={false}
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        onChange={onShiftStartChange}
+                      />
+                      {Platform.OS === 'ios' && (
+                        <Pressable style={styles.dateDoneBtn} onPress={() => setShowShiftStartPicker(false)}>
+                          <Text style={styles.dateDoneText}>Done</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  )}
+                </View>
+              </View>
+              <View style={styles.shiftField}>
+                <View style={styles.dateFieldWrap}>
+                  <Text style={styles.dateLabel}>End Time</Text>
+                  <Pressable
+                    style={({ pressed }) => [styles.dateInputButton, pressed && styles.dateInputButtonPressed]}
+                    onPress={() => setShowShiftEndPicker(true)}>
+                    <Text style={styles.dateValueText}>{formatTime12Hour(shiftEnd)}</Text>
+                  </Pressable>
+                  {showShiftEndPicker && (
+                    <View style={styles.datePickerWrap}>
+                      <DateTimePicker
+                        value={parseTimeToDate(shiftEnd)}
+                        mode="time"
+                        is24Hour={false}
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        onChange={onShiftEndChange}
+                      />
+                      {Platform.OS === 'ios' && (
+                        <Pressable style={styles.dateDoneBtn} onPress={() => setShowShiftEndPicker(false)}>
+                          <Text style={styles.dateDoneText}>Done</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  )}
+                </View>
+              </View>
+            </View>
+            <Field
+              label="Duration (hours)"
+              value={durationHours}
+              onChangeText={onDurationChange}
+              keyboardType="numeric"
+              placeholder="8"
+            />
+            <View style={styles.shiftTimeRow}>
+              <View style={styles.shiftField}>
+                <Field
+                  label="Grace Time (minutes)"
+                  value={graceTime}
+                  onChangeText={setGraceTime}
+                  keyboardType="numeric"
+                  placeholder="10"
+                />
+              </View>
+              <View style={styles.shiftField}>
+                <Field
+                  label="Late Mark Rule (minutes)"
+                  value={lateRuleMinutes}
+                  onChangeText={setLateRuleMinutes}
+                  keyboardType="numeric"
+                  placeholder="15"
+                />
+              </View>
+            </View>
+            <Field
+              label="Half Day Rule (hours)"
+              value={halfDayHours}
+              onChangeText={setHalfDayHours}
+              keyboardType="numeric"
+              placeholder="4"
+            />
+            <View style={styles.shiftBtnRow}>
+              <View style={styles.shiftBtn}>
+                <PrimaryButton
+                  title={savingShift ? 'Saving...' : editingShift ? 'Update Shift' : 'Save Shift'}
+                  onPress={onCreateOrUpdateShift}
+                  loading={savingShift}
+                />
+              </View>
+              {editingShift ? (
+                <Pressable style={styles.defaultShiftBtn} onPress={resetShiftForm}>
+                  <Text style={styles.defaultShiftBtnText}>Cancel Edit</Text>
+                </Pressable>
+              ) : null}
+            </View>
+            <Text style={styles.shiftHint}>Duration defaults to 8 hours, and you can change it when needed.</Text>
+          </Card>
+
+          <Text style={styles.sectionCount}>{isLoading ? 'Loading shifts...' : `${shiftTemplates.length} shifts`}</Text>
+
+          {!isLoading && !shiftTemplates.length ? (
             <View style={styles.emptyWrap}>
               <Text style={styles.emptyTitle}>No Shifts</Text>
-              <Text style={styles.emptySub}>Create a shift or load standard shifts.</Text>
+              <Text style={styles.emptySub}>Create a reusable shift template to get started.</Text>
             </View>
-          ) : null
-        }
-        renderItem={({ item, index }) => (
-          <View style={styles.staffTableRow}>
-            <Text style={[styles.tableCell, styles.colCode]}>{index + 1}</Text>
-            <Text style={[styles.tableCell, styles.colName]} numberOfLines={1}>
-              {item.name}
-            </Text>
-            <Text style={[styles.tableCell, styles.colStatus]} numberOfLines={1}>
-              {item.startTime} - {item.endTime}
-            </Text>
-            <View style={[styles.colAction, styles.rowActions]}>
-              <ShiftActiveToggle active={item.active} onPress={() => onToggleShiftActive(item)} />
-            </View>
-          </View>
-        )}
-      />
-    </View>
-  );
-}
+          ) : null}
 
-function ShiftActiveToggle({ active, onPress }: { active: boolean; onPress: () => void }) {
-  const progress = useRef(new Animated.Value(active ? 1 : 0)).current;
+          {shiftTemplates.length ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shiftTableScrollContent}>
+              <View style={styles.shiftTableWrap}>
+                <View style={styles.shiftTableHeaderRow}>
+                  <Text style={[styles.tableHead, styles.shiftColIndex]}>No.</Text>
+                  <Text style={[styles.tableHead, styles.shiftColName]}>Shift Name</Text>
+                  <Text style={[styles.tableHead, styles.shiftColTime]}>Time</Text>
+                  <Text style={[styles.tableHead, styles.shiftColRules]}>Rules</Text>
+                  <Text style={[styles.tableHead, styles.shiftColActionsHeader]}>Actions</Text>
+                </View>
 
-  useEffect(() => {
-    Animated.spring(progress, {
-      toValue: active ? 1 : 0,
-      useNativeDriver: true,
-      friction: 9,
-      tension: 95,
-    }).start();
-  }, [active, progress]);
-
-  const thumbTranslateX = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [2, 24],
-  });
-
-  return (
-    <Pressable
-      style={styles.shiftToggle}
-      onPress={onPress}
-      accessibilityRole="switch"
-      accessibilityState={{ checked: active }}
-      hitSlop={6}>
-      <View style={[styles.shiftToggleTrack, active ? styles.shiftToggleTrackActive : styles.shiftToggleTrackInactive]}>
-        <Animated.View
-          style={[
-            styles.shiftToggleThumb,
-            active ? styles.shiftToggleThumbActive : styles.shiftToggleThumbInactive,
-            { transform: [{ translateX: thumbTranslateX }] },
-          ]}
-        />
+                {shiftTemplates.map((item, index) => (
+                  <View key={item.id} style={styles.shiftTableRow}>
+                    <Text style={[styles.tableCell, styles.shiftColIndex]}>{index + 1}</Text>
+                    <Text style={[styles.tableCell, styles.shiftColName]} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+                    <Text style={[styles.tableCell, styles.shiftColTime]} numberOfLines={1}>
+                      {formatTime12Hour(item.startTime)} - {formatTime12Hour(item.endTime)}
+                    </Text>
+                    <Text style={[styles.weekSubCell, styles.shiftColRules]} numberOfLines={2}>
+                      {`Dur ${item.durationHours}h | Grace ${item.graceTime}m | Late ${item.lateRuleMinutes}m | Half ${item.halfDayHours}h`}
+                    </Text>
+                    <View style={styles.shiftColActions}>
+                      <Pressable style={styles.shiftIconBtn} onPress={() => onEditShift(item)}>
+                        <Ionicons name="create-outline" size={18} color="#3554a5" />
+                      </Pressable>
+                      <Pressable style={[styles.shiftIconBtn, styles.shiftIconBtnDanger]} onPress={() => onDeleteShift(item)}>
+                        <Ionicons name="trash-outline" size={18} color="#c22a2a" />
+                      </Pressable>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+          ) : null}
+        </View>
+      </ScrollView>
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
       </View>
-      <Text style={[styles.shiftToggleLabel, active ? styles.shiftToggleLabelActive : styles.shiftToggleLabelInactive]}>{active ? 'ON' : 'OFF'}</Text>
-    </Pressable>
+    </View>
   );
 }
 
 function StaffFormScreen({ navigation, route }: { navigation: any; route: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const employee = route.params?.employee as Employee | undefined;
   const mode = route.params?.mode as 'new' | 'edit';
 
   const { data: employees = [] } = useGetEmployeesQuery(shopId, { skip: !shopId });
+  const { data: shop } = useGetShopByIdQuery(shopId, { skip: !shopId });
   const { data: shifts = [] } = useGetShiftsQuery(shopId, { skip: !shopId });
+  const currentEmployee = useMemo(
+    () => (employee ? employees.find(item => item.id === employee.id) ?? employee : undefined),
+    [employee, employees],
+  );
   const nextEmployeeCode = useMemo(() => generateNextEmployeeCode(employees), [employees]);
 
   const [form, setForm] = useState<EmployeeForm>(() => {
@@ -1261,6 +1590,8 @@ function StaffFormScreen({ navigation, route }: { navigation: any; route: any })
       employeeCode: employee.employeeCode ?? '',
       name: employee.name,
       phone: employee.phone,
+      loginEmail: employee.loginEmail ?? '',
+      loginPassword: '',
       addressLine1: employee.addressLine1 ?? employee.address ?? '',
       taluka: employee.taluka ?? '',
       district: employee.district ?? '',
@@ -1290,17 +1621,37 @@ function StaffFormScreen({ navigation, route }: { navigation: any; route: any })
 
   const [upsertEmployee, { isLoading: saving }] = useUpsertEmployeeMutation();
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const normalizedLoginEmail = useMemo(() => form.loginEmail.trim().toLowerCase(), [form.loginEmail]);
+  const duplicateLoginEmployee = useMemo(() => {
+    if (!normalizedLoginEmail) {
+      return undefined;
+    }
+    return employees.find(item => {
+      if (item.id === (form.id || currentEmployee?.id)) {
+        return false;
+      }
+      return (item.loginEmail ?? '').trim().toLowerCase() === normalizedLoginEmail;
+    });
+  }, [currentEmployee?.id, employees, form.id, normalizedLoginEmail]);
+  const shopEmailConflict = normalizedLoginEmail && (shop?.email ?? '').trim().toLowerCase() === normalizedLoginEmail;
+  const authPreview = currentEmployee?.authUid
+    ? currentEmployee
+    : normalizedLoginEmail
+      ? ({ authStatus: 'pending' as EmployeeAuthStatus, authUid: '' })
+      : currentEmployee;
+  const authStatusStyles = getEmployeeAuthStyleKeys(authPreview);
+  const authStatusLabel = getEmployeeAuthStatusLabel(authPreview);
 
   const autoBiometricUserId = useMemo(
     () =>
       generateUniqueBiometricUserId({
         employees,
-        excludeEmployeeId: form.id || employee?.id,
+        excludeEmployeeId: form.id || currentEmployee?.id,
         employeeCode: form.employeeCode,
         phone: form.phone,
         currentBiometricUserId: mode === 'edit' ? form.biometricUserId : undefined,
       }),
-    [employee?.id, employees, form.biometricUserId, form.employeeCode, form.id, form.phone, mode],
+    [currentEmployee?.id, employees, form.biometricUserId, form.employeeCode, form.id, form.phone, mode],
   );
 
   useEffect(() => {
@@ -1331,7 +1682,7 @@ function StaffFormScreen({ navigation, route }: { navigation: any; route: any })
     }
     const finalBiometricId = generateUniqueBiometricUserId({
       employees,
-      excludeEmployeeId: form.id || employee?.id,
+      excludeEmployeeId: form.id || currentEmployee?.id,
       employeeCode: form.employeeCode,
       phone: form.phone,
       currentBiometricUserId: form.biometricUserId || autoBiometricUserId,
@@ -1344,41 +1695,59 @@ function StaffFormScreen({ navigation, route }: { navigation: any; route: any })
     Alert.alert('Registered', `Biometric ID ${finalBiometricId} registered for attendance matching.`);
   };
 
-  const onSave = async () => {
+  const validateLoginFields = () => {
+    if (!normalizedLoginEmail) {
+      return true;
+    }
+    if (!normalizedLoginEmail.includes('@')) {
+      throw new Error('Enter a valid staff email.');
+    }
+    if (duplicateLoginEmployee) {
+      throw new Error(`${duplicateLoginEmployee.name} already uses this email.`);
+    }
+    if (shopEmailConflict) {
+      throw new Error('Staff email cannot match the shop manager email.');
+    }
+    if (!currentEmployee?.authUid && form.loginPassword.trim().length < 6) {
+      throw new Error('Password must be at least 6 characters.');
+    }
+    if (currentEmployee?.authUid && currentEmployee.loginEmail && currentEmployee.loginEmail.trim().toLowerCase() !== normalizedLoginEmail) {
+      throw new Error('Existing linked auth email cannot be changed from this form.');
+    }
+    return true;
+  };
+
+  const buildEmployeePayload = () => {
     if (!shopId) {
-      Alert.alert('Error', 'Shop is not linked.');
-      return;
+      throw new Error('Shop is not linked.');
     }
     if (!form.employeeCode || !form.name || !form.phone || !form.designation || !form.joiningDate || !form.basicSalary) {
-      Alert.alert('Validation', 'Please fill all required fields.');
-      return;
+      throw new Error('Please fill all required fields.');
     }
     if (!form.taluka || !form.district) {
-      Alert.alert('Validation', 'Taluka and District are required.');
-      return;
+      throw new Error('Taluka and District are required.');
     }
     if (!form.aadhaarNo || !/^\d{12}$/.test(form.aadhaarNo.trim())) {
-      Alert.alert('Validation', 'Aadhaar number must be 12 digits.');
-      return;
+      throw new Error('Aadhaar number must be 12 digits.');
     }
+
     const finalBiometricUserId = generateUniqueBiometricUserId({
       employees,
-      excludeEmployeeId: form.id || employee?.id,
+      excludeEmployeeId: form.id || currentEmployee?.id,
       employeeCode: form.employeeCode,
       phone: form.phone,
       currentBiometricUserId: form.biometricUserId || autoBiometricUserId,
     });
     if (form.biometricConsent && !finalBiometricUserId) {
-      Alert.alert('Validation', 'Biometric User ID is required when biometric is accepted.');
-      return;
+      throw new Error('Biometric User ID is required when biometric is accepted.');
     }
 
-    const previousStatus = employee?.status;
+    const previousStatus = currentEmployee?.status;
     const today = todayDate();
     let activatedAt = form.activatedAt || form.joiningDate || today;
     let deactivatedAt = form.deactivatedAt || '';
 
-    if (!employee) {
+    if (!currentEmployee) {
       if (form.status === 'inactive') {
         deactivatedAt = today;
       }
@@ -1392,71 +1761,128 @@ function StaffFormScreen({ navigation, route }: { navigation: any; route: any })
       }
     }
 
-    const address = [form.addressLine1.trim(), form.taluka.trim(), form.district.trim()]
-      .filter(Boolean)
-      .join(', ');
+    const address = [form.addressLine1.trim(), form.taluka.trim(), form.district.trim()].filter(Boolean).join(', ');
+    const stableEmployeeId = form.id || `emp_${form.employeeCode.trim()}`;
 
+    return {
+      stableEmployeeId,
+      payload: {
+        id: stableEmployeeId,
+        shopId,
+        employeeCode: form.employeeCode.trim(),
+        name: form.name.trim(),
+        phone: form.phone.trim(),
+        address,
+        addressLine1: form.addressLine1.trim(),
+        taluka: form.taluka.trim(),
+        district: form.district.trim(),
+        organization: form.organization.trim(),
+        designation: form.designation.trim(),
+        aadhaarNo: form.aadhaarNo.trim(),
+        biometricUserId: finalBiometricUserId,
+        biometricConsent: form.biometricConsent,
+        biometricRegisteredAt: form.biometricRegisteredAt || '',
+        joiningDate: form.joiningDate.trim(),
+        defaultShiftId: form.defaultShiftId || '',
+        weeklyOff: form.weeklyOff,
+        salaryType: 'monthly' as const,
+        basicSalary: Number(form.basicSalary),
+        pfAmount: Number(form.pfAmount || 0),
+        overtimeRatePerHour: Number(form.overtimeRatePerHour || 0),
+        loginEmail: currentEmployee?.authUid || normalizedLoginEmail ? normalizedLoginEmail : '',
+        authUid: currentEmployee?.authUid ?? '',
+        authStatus: currentEmployee?.authUid ? currentEmployee.authStatus ?? 'provisioned' : normalizedLoginEmail ? 'provisioned' : 'not_created',
+        status: form.status,
+        activatedAt,
+        deactivatedAt,
+      },
+    };
+  };
+
+  const onSave = async () => {
+    let createdAuthForRollback = false;
     try {
-      const stableEmployeeId = form.id || `emp_${form.employeeCode.trim()}`;
-      const saveStatus = await withActionDeadline(
-        upsertEmployee({
-          id: stableEmployeeId,
-          shopId,
-          employeeCode: form.employeeCode.trim(),
-          name: form.name.trim(),
-          phone: form.phone.trim(),
-          address,
-          addressLine1: form.addressLine1.trim(),
-          taluka: form.taluka.trim(),
-          district: form.district.trim(),
-          organization: form.organization.trim(),
-          designation: form.designation.trim(),
-          aadhaarNo: form.aadhaarNo.trim(),
-          biometricUserId: finalBiometricUserId,
-          biometricConsent: form.biometricConsent,
-          biometricRegisteredAt: form.biometricRegisteredAt || '',
-          joiningDate: form.joiningDate.trim(),
-          defaultShiftId: form.defaultShiftId || '',
-          weeklyOff: form.weeklyOff,
-          salaryType: 'monthly',
-          basicSalary: Number(form.basicSalary),
-          pfAmount: Number(form.pfAmount || 0),
-          overtimeRatePerHour: Number(form.overtimeRatePerHour || 0),
-          status: form.status,
-          activatedAt,
-          deactivatedAt,
-        })
-          .unwrap()
-          .then(() => 'saved' as const),
-        12000,
-        'pending' as const,
-      );
+      validateLoginFields();
+      let createdAuthUid = currentEmployee?.authUid ?? '';
+      if (!createdAuthUid && normalizedLoginEmail) {
+        const created = await createStaffAuthUserLocally({
+          email: normalizedLoginEmail,
+          password: form.loginPassword.trim(),
+          displayName: form.name.trim(),
+        });
+        createdAuthUid = created.uid;
+        createdAuthForRollback = true;
+      }
+
+      const { payload } = buildEmployeePayload();
+      payload.authUid = createdAuthUid;
+      payload.authStatus = createdAuthUid ? (currentEmployee?.authStatus ?? 'provisioned') : 'not_created';
+      payload.loginEmail = createdAuthUid ? normalizedLoginEmail : '';
+
+      await upsertEmployee(payload).unwrap();
 
       Alert.alert(
-        saveStatus === 'saved' ? 'Success' : 'Syncing',
-        saveStatus === 'saved'
-          ? `Staff member ${mode === 'edit' ? 'updated' : 'created'} successfully.`
-          : 'Staff details queued and syncing in background. It will reflect automatically.',
+        'Success',
+        createdAuthUid
+          ? `Staff member ${mode === 'edit' ? 'updated' : 'created'} and auth account saved successfully.`
+          : `Staff member ${mode === 'edit' ? 'updated' : 'created'} successfully.`,
       );
       navigation.goBack();
     } catch (error) {
+      if (createdAuthForRollback && normalizedLoginEmail && form.loginPassword.trim()) {
+        try {
+          await deleteStaffAuthUserLocally({
+            email: normalizedLoginEmail,
+            password: form.loginPassword.trim(),
+          });
+        } catch {
+          // Best effort rollback only; preserve the original save error for the user.
+        }
+      }
       Alert.alert('Save failed', (error as Error).message);
     }
   };
 
   return (
     <KeyboardAvoidingView style={styles.formScreen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView contentContainerStyle={styles.formContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.formHeader}>
-          <Text style={styles.formTitle}>{mode === 'edit' ? 'Edit Staff' : 'Create New Staff'}</Text>
-          <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
-            <Text style={styles.closeText}>Close</Text>
-          </Pressable>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <ScrollView
+        contentContainerStyle={[styles.formContent, { paddingTop: Math.max(insets.top + 38, 66) }]}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.staffFormHero}>
+          <View style={styles.staffFormHeroTop}>
+            <View style={styles.staffFormBadge}>
+              <Text style={styles.staffFormBadgeText}>{mode === 'edit' ? 'Staff Update' : 'Staff Registration'}</Text>
+            </View>
+            <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.formTitle}>{mode === 'edit' ? 'Edit Staff Member' : 'Register Staff Member'}</Text>
+          <Text style={styles.staffFormIntro}>
+            Use one clean form to register the staff member under this shop. Personal details, work setup, payroll settings, and app login are handled together here.
+          </Text>
+
+          <View style={styles.staffFormHeroStats}>
+            <View style={styles.staffFormHeroStatCard}>
+              <Text style={styles.staffFormHeroStatLabel}>Staff Code</Text>
+              <Text style={styles.staffFormHeroStatValue}>{form.employeeCode || '-'}</Text>
+            </View>
+            <View style={styles.staffFormHeroStatCard}>
+              <Text style={styles.staffFormHeroStatLabel}>Status</Text>
+              <Text style={styles.staffFormHeroStatValue}>{form.status === 'active' ? 'Active' : 'Inactive'}</Text>
+            </View>
+            <View style={styles.staffFormHeroStatCard}>
+              <Text style={styles.staffFormHeroStatLabel}>Access</Text>
+              <Text style={styles.staffFormHeroStatValue}>{authStatusLabel}</Text>
+            </View>
+          </View>
         </View>
-        <Text style={styles.formSubtitle}>Unique staff number is auto generated and cannot be edited.</Text>
 
         <Card>
           <Text style={styles.formSectionTitle}>Basic Details</Text>
+          <Text style={styles.formSectionSubtitle}>Employee code is auto-generated and kept read-only for consistency.</Text>
           <Field label="Unique Number" value={form.employeeCode} editable={false} />
           <Field label="Full Name" value={form.name} onChangeText={v => setForm(prev => ({ ...prev, name: v }))} />
           <Field label="Phone Number" value={form.phone} onChangeText={v => setForm(prev => ({ ...prev, phone: v }))} keyboardType="phone-pad" />
@@ -1473,7 +1899,11 @@ function StaffFormScreen({ navigation, route }: { navigation: any; route: any })
             placeholder="12-digit Aadhaar"
           />
 
+        </Card>
+
+        <Card>
           <Text style={styles.formSectionTitle}>Joining & Shift</Text>
+          <Text style={styles.formSectionSubtitle}>Set the joining date, assign a default shift, and choose the weekly off day.</Text>
           <View style={styles.dateFieldWrap}>
             <Text style={styles.dateLabel}>Joining Date (DD.MM.YYYY)</Text>
             <Pressable
@@ -1532,8 +1962,11 @@ function StaffFormScreen({ navigation, route }: { navigation: any; route: any })
             ))}
           </View>
           <Text style={styles.shiftHint}>Weekly off is considered PH (Paid Holiday) in salary calendar.</Text>
+        </Card>
 
+        <Card>
           <Text style={styles.formSectionTitle}>Biometric Mapping</Text>
+          <Text style={styles.formSectionSubtitle}>Use biometric only after staff consent is captured for attendance matching.</Text>
           <Field
             label="Biometric User ID (Auto)"
             value={form.biometricUserId || autoBiometricUserId}
@@ -1556,8 +1989,11 @@ function StaffFormScreen({ navigation, route }: { navigation: any; route: any })
               Registered On: {form.biometricRegisteredAt ? formatDisplayDate(form.biometricRegisteredAt) : '-'}
             </Text>
           </View>
+        </Card>
 
+        <Card>
           <Text style={styles.formSectionTitle}>Salary Details</Text>
+          <Text style={styles.formSectionSubtitle}>Enter the salary values used for monthly payroll calculations.</Text>
           <Field label="Basic Salary" value={form.basicSalary} onChangeText={v => setForm(prev => ({ ...prev, basicSalary: v }))} keyboardType="numeric" />
           <Field label="PF" value={form.pfAmount} onChangeText={v => setForm(prev => ({ ...prev, pfAmount: v }))} keyboardType="numeric" />
           <Field
@@ -1566,8 +2002,50 @@ function StaffFormScreen({ navigation, route }: { navigation: any; route: any })
             onChangeText={v => setForm(prev => ({ ...prev, overtimeRatePerHour: v }))}
             keyboardType="numeric"
           />
+        </Card>
 
+        <Card>
+          <Text style={styles.formSectionTitle}>Simple Sign Up</Text>
+          <Text style={styles.formSectionSubtitle}>
+            Create the staff login directly with email and password. The staff profile details and Authentication user will be saved together from this form.
+          </Text>
+
+          <View style={styles.accessSectionHeaderRow}>
+            <Text style={styles.accessSectionTitle}>Authentication Status</Text>
+            <View style={[styles.authPill, styles[authStatusStyles.pill]]}>
+              <Text style={[styles.authPillText, styles[authStatusStyles.text]]}>{authStatusLabel}</Text>
+            </View>
+          </View>
+          <Field
+            label="Staff Email"
+            value={form.loginEmail}
+            onChangeText={value => setForm(prev => ({ ...prev, loginEmail: value }))}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            placeholder="staff@example.com"
+            editable={!currentEmployee?.authUid}
+          />
+          <Field
+            label={currentEmployee?.authUid ? 'Password' : 'Create Password'}
+            value={form.loginPassword}
+            onChangeText={value => setForm(prev => ({ ...prev, loginPassword: value }))}
+            secureTextEntry
+            placeholder={currentEmployee?.authUid ? 'Already linked in Authentication' : 'Minimum 6 characters'}
+            editable={!currentEmployee?.authUid}
+          />
+          <Field label="Auth UID" value={currentEmployee?.authUid?.trim() || '-'} editable={false} />
+          <Text style={styles.shiftHint}>
+            If email and password are entered for a new staff member, the user will be created directly in Firebase Authentication from this form.
+          </Text>
+
+          {duplicateLoginEmployee ? <Text style={styles.authWarningText}>{`${duplicateLoginEmployee.name} already uses this email.`}</Text> : null}
+          {shopEmailConflict ? <Text style={styles.authWarningText}>Staff email cannot match the shop manager email.</Text> : null}
+          {currentEmployee?.authLastError ? <Text style={styles.authErrorText}>{currentEmployee.authLastError}</Text> : null}
+        </Card>
+
+        <Card>
           <Text style={styles.formSectionTitle}>Activation</Text>
+          <Text style={styles.formSectionSubtitle}>Choose whether the staff profile is active and review service dates.</Text>
           <View style={styles.statusRow}>
             <Pressable
               style={[styles.statusChip, form.status === 'active' ? styles.statusChipActive : undefined]}
@@ -1589,10 +2067,22 @@ function StaffFormScreen({ navigation, route }: { navigation: any; route: any })
             editable={false}
           />
           <Field label="Total Service" value={computedService} editable={false} />
+        </Card>
 
-          <PrimaryButton title={mode === 'edit' ? 'Update Staff' : 'Create Staff'} onPress={onSave} loading={saving} />
+        <Card>
+          <Text style={styles.formSectionTitle}>Save Profile</Text>
+          <Text style={styles.formSectionSubtitle}>Review the details once and save the staff profile.</Text>
+          <PrimaryButton
+            title={mode === 'edit' ? 'Update Staff' : 'Create Staff'}
+            onPress={onSave}
+            loading={saving}
+          />
         </Card>
       </ScrollView>
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -1623,15 +2113,18 @@ function onDateChange(
   setForm(prev => ({ ...prev, joiningDate: dayjs(selectedDate).format('YYYY-MM-DD') }));
 }
 
-function calculateShiftHours(startTime: string, endTime: string) {
+function calculateTemplateShiftHours(startTime: string, endTime: string) {
   const start = parseTimeToMinutes(startTime);
   const end = parseTimeToMinutes(endTime);
   if (start === null || end === null) {
     return null;
   }
   let diff = end - start;
-  if (diff <= 0) {
+  if (diff < 0) {
     diff += 24 * 60;
+  }
+  if (diff === 0) {
+    return null;
   }
   return Number((diff / 60).toFixed(2));
 }
@@ -1658,137 +2151,92 @@ function parseTimeToDate(value: string) {
   return date;
 }
 
-function compactShiftLabel(value: string) {
-  if (!value || value === '-') {
-    return '-';
+function formatDurationHours(value: number) {
+  if (!Number.isFinite(value)) {
+    return '';
   }
-  const normalized = value.trim();
-  if (normalized.length <= 10) {
-    return normalized;
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+}
+
+function calculateEndTimeFromDuration(startTime: string, durationHours: number) {
+  const startMinutes = parseTimeToMinutes(startTime);
+  if (startMinutes === null || !Number.isFinite(durationHours) || durationHours <= 0) {
+    return null;
   }
-  return `${normalized.slice(0, 9)}…`;
-}
 
-async function upsertShiftWithRetry(
-  upsertShift: ReturnType<typeof useUpsertShiftMutation>[0],
-  payload: {
-    id?: string;
-    shopId: string;
-    name: string;
-    startTime: string;
-    endTime: string;
-    durationHours: number;
-    active: boolean;
-  },
-  options?: {
-    maxAttempts?: number;
-    attemptTimeoutMs?: number;
-    retryDelayMs?: number;
-  },
-): Promise<'saved' | 'pending'> {
-  const maxAttempts = Math.max(1, options?.maxAttempts ?? 2);
-  const attemptTimeoutMs = Math.max(1000, options?.attemptTimeoutMs ?? 6000);
-  const retryDelayMs = Math.max(0, options?.retryDelayMs ?? 400);
-  const retryDelaysMs = Array.from({ length: maxAttempts }, (_, index) => (index === 0 ? 0 : retryDelayMs));
-  let lastError: unknown;
-  for (const delayMs of retryDelaysMs) {
-    if (delayMs > 0) {
-      await new Promise<void>(resolve => setTimeout(() => resolve(), delayMs));
-    }
-    try {
-      const request = upsertShift(payload).unwrap();
-      const result = await Promise.race([
-        request.then(() => 'saved' as const),
-        waitMs(attemptTimeoutMs).then(() => 'pending' as const),
-      ]);
-      if (result === 'saved') {
-        return 'saved';
-      }
-      request.catch(() => {
-        // keep promise handled while sync continues in background
-      });
-      if (payload.id) {
-        const confirmed = await confirmShiftPersisted(payload.shopId, payload.id);
-        if (confirmed) {
-          return 'saved';
-        }
-      }
-      return 'pending';
-    } catch (error) {
-      lastError = error;
-      const message = String((error as { message?: string })?.message ?? '').toLowerCase();
-      if (message.includes('timed out') && payload.id) {
-        const confirmed = await confirmShiftPersisted(payload.shopId, payload.id);
-        if (confirmed) {
-          return 'saved';
-        }
-      }
-      const isTransient =
-        message.includes('firestore/unavailable') ||
-        message.includes('unavailable') ||
-        message.includes('deadline') ||
-        message.includes('network') ||
-        message.includes('timed out');
-      if (!isTransient) {
-        throw error;
-      }
-      if (delayMs === retryDelaysMs[retryDelaysMs.length - 1]) {
-        return 'pending';
-      }
-    }
+  const durationMinutes = Math.round(durationHours * 60);
+  if (durationMinutes >= 24 * 60) {
+    return null;
   }
-  if (lastError) {
-    return 'pending';
+  const endMinutes = (startMinutes + durationMinutes) % (24 * 60);
+
+  const hours = Math.floor(endMinutes / 60);
+  const minutes = endMinutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function formatTime12Hour(value: string) {
+  const parsed = parseTimeToMinutes(value);
+  if (parsed === null) {
+    return value;
   }
-  return 'saved';
+
+  const normalizedMinutes = parsed % (24 * 60);
+  const hours24 = Math.floor(normalizedMinutes / 60);
+  const minutes = normalizedMinutes % 60;
+  const suffix = hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = hours24 % 12 || 12;
+  return `${String(hours12).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${suffix}`;
 }
 
-function waitMs(timeoutMs: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, timeoutMs));
+function isNonNegativeNumeric(value: string) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0;
 }
 
-function withActionDeadline<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
-  return Promise.race([promise, waitMs(timeoutMs).then(() => fallback)]);
+function isPositiveNumeric(value: string) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0;
 }
 
-async function confirmShiftPersisted(shopId: string, shiftId: string) {
-  const probeDelaysMs = [350, 900, 1600];
-  for (const delayMs of probeDelaysMs) {
-    if (delayMs > 0) {
-      await new Promise<void>(resolve => setTimeout(() => resolve(), delayMs));
-    }
-    try {
-      const snap = await Promise.race([
-        shiftsCol(shopId).doc(shiftId).get(),
-        waitMs(1400).then(() => null),
-      ]);
-      if (snap && (snap as { exists: () => boolean }).exists()) {
-        return true;
-      }
-    } catch {
-      // keep probing
-    }
+function buildPlannerDay(shopId: string, staffId: string, dayOfWeek: number): StaffWeeklyShiftDay {
+  return {
+    id: `${staffId || 'staff'}_${dayOfWeek}`,
+    shopId,
+    staffId,
+    dayOfWeek,
+    shiftId: null,
+    isOff: false,
+    createdAt: '',
+    updatedAt: '',
+  };
+}
+
+function buildEmptyWeeklyPlan(shopId: string, staffId: string) {
+  return plannerDays.map(day => buildPlannerDay(shopId, staffId, day.dayOfWeek));
+}
+
+function normalizeWeeklyPlanDays(days: StaffWeeklyShiftDay[], shopId: string, staffId: string) {
+  const byDay = new Map(days.map(item => [item.dayOfWeek, item]));
+  return plannerDays.map(day => byDay.get(day.dayOfWeek) ?? buildPlannerDay(shopId, staffId, day.dayOfWeek));
+}
+
+function areWeeklyPlanDaysEqual(left: StaffWeeklyShiftDay[], right: StaffWeeklyShiftDay[]) {
+  if (left.length !== right.length) {
+    return false;
   }
-  return false;
-}
 
-function buildShiftId(name: string, startTime: string, endTime: string) {
-  const key = `${name}|${startTime}|${endTime}`.trim().toLowerCase();
-  const sanitized = key
-    .replace(/\s+/g, '_')
-    .replace(/[^a-z0-9:_-]/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return `shift_${sanitized || 'default'}`;
-}
-
-function CountChip({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.countChip}>
-      <Text style={styles.countChipLabel}>{label}</Text>
-      <Text style={styles.countChipValue}>{value}</Text>
-    </View>
-  );
+  return left.every((item, index) => {
+    const other = right[index];
+    return (
+      item.id === other?.id &&
+      item.shopId === other?.shopId &&
+      item.staffId === other?.staffId &&
+      item.dayOfWeek === other?.dayOfWeek &&
+      item.shiftId === other?.shiftId &&
+      item.isOff === other?.isOff
+    );
+  });
 }
 
 function getServiceDuration(employee: Employee) {
@@ -1881,88 +2329,143 @@ function generateUniqueBiometricUserId({
 const styles = StyleSheet.create({
   page: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: '#f3f6fb',
   },
   listContent: {
-    gap: 10,
-    paddingHorizontal: 16,
+    gap: 14,
     paddingBottom: 24,
   },
   headerBlock: {
-    gap: 10,
+    gap: 14,
   },
   staffHeaderCard: {
-    marginHorizontal: -16,
-    borderWidth: 1,
-    borderColor: '#0f8f6f',
-    backgroundColor: '#0c8a69',
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
-    borderBottomLeftRadius: 14,
-    borderBottomRightRadius: 14,
-    paddingHorizontal: 14,
-    paddingTop: 16,
-    paddingBottom: 14,
-    gap: 4,
+    backgroundColor: colors.success,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    paddingHorizontal: 16,
+    paddingBottom: 18,
+    gap: 14,
     overflow: 'hidden',
   },
   staffHeaderGradientBase: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#0b8f6d',
   },
-  staffHeaderGradientMid: {
-    ...StyleSheet.absoluteFillObject,
-    top: '34%',
-    backgroundColor: '#0a7e60',
-  },
   staffHeaderGradientGlowTop: {
     position: 'absolute',
     top: -90,
-    right: -60,
+    right: -50,
     width: 240,
     height: 240,
     borderRadius: 120,
-    backgroundColor: '#3ac39f',
-    opacity: 0.34,
+    backgroundColor: '#30b28b',
+    opacity: 0.26,
   },
   staffHeaderGradientGlowBottom: {
     position: 'absolute',
-    bottom: -105,
-    left: -50,
-    width: 250,
-    height: 250,
-    borderRadius: 125,
+    bottom: -120,
+    left: -40,
+    width: 220,
+    height: 220,
+    borderRadius: 110,
     backgroundColor: '#06644d',
-    opacity: 0.5,
+    opacity: 0.3,
   },
   staffHeaderTitle: {
     color: '#ffffff',
-    fontSize: 34,
+    fontSize: 32,
     fontWeight: '900',
   },
   staffHeaderMeta: {
-    color: '#d7fff1',
-    fontSize: 15,
+    color: '#defbf1',
+    fontSize: 16,
     fontWeight: '700',
   },
-  staffHeaderDivider: {
-    height: 1,
-    backgroundColor: '#62c7ab',
-    marginVertical: 6,
-  },
-  staffHeaderSubTitle: {
-    color: '#ffffff',
-    fontWeight: '800',
-    fontSize: 19,
-  },
-  staffHeaderSubMeta: {
-    color: '#dffaf0',
+  staffHeaderPoweredBy: {
+    color: '#c8f3e8',
+    fontSize: 14,
     fontWeight: '600',
-    fontSize: 13,
+  },
+  staffHeaderBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+  },
+  staffHeaderBadgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  staffHeaderTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  menuBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(9, 82, 64, 0.9)',
+  },
+  menuBtnPressed: {
+    backgroundColor: '#085542',
+  },
+  staffHeaderTextBlock: {
+    gap: 4,
+  },
+  staffSummaryCard: {
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(6, 85, 64, 0.32)',
+    gap: 6,
+  },
+  staffSummaryEyebrow: {
+    color: '#d6f8ed',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  staffSummaryMetaLabel: {
+    color: '#c9f4e7',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  staffSummaryMetaValue: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  staffSummaryGrid: {
+    marginTop: 2,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  staffSummaryCountCard: {
+    width: '47.5%',
+    minHeight: 62,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    gap: 4,
   },
   policyTitle: {
     color: colors.textPrimary,
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '800',
     marginBottom: 2,
   },
@@ -1973,67 +2476,64 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   actionGrid: {
+    paddingHorizontal: 16,
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  sectionPad: {
+    paddingHorizontal: 16,
   },
   actionTile: {
-    width: '48%',
-    minHeight: 126,
-    borderWidth: 1.5,
-    borderColor: '#cfd9e6',
-    borderRadius: 14,
+    width: '47.5%',
+    minHeight: 188,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    borderRadius: 18,
     backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 12,
-    gap: 8,
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.05,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 10,
-    elevation: 1,
-  },
-  actionTileActive: {
-    backgroundColor: '#e9f8f1',
-    borderColor: '#0f8f6f',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.06,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 12,
+    elevation: 2,
   },
   actionTilePressed: {
-    backgroundColor: '#f2f8fd',
-    borderColor: '#b7c8de',
+    backgroundColor: '#f8fbff',
+    borderColor: '#c9d6e6',
+  },
+  actionTileAccent: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 4,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
   },
   actionTileIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef3f9',
     borderWidth: 1,
-    borderColor: '#d8e2ed',
-  },
-  actionTileIconWrapActive: {
-    backgroundColor: '#def4e9',
-    borderColor: '#b7ead3',
-  },
-  actionTileIcon: {
-    color: '#334155',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  actionTileIconActive: {
-    color: '#0b6c54',
   },
   actionTileText: {
-    color: '#111827',
-    fontSize: 19,
+    marginTop: 14,
+    color: colors.textPrimary,
+    fontSize: 18,
     fontWeight: '800',
-    textAlign: 'center',
     lineHeight: 24,
   },
-  actionTileTextActive: {
-    color: '#0b6c54',
+  actionTileDescription: {
+    marginTop: 8,
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
   },
   topRow: {
     flexDirection: 'row',
@@ -2445,6 +2945,10 @@ const styles = StyleSheet.create({
   fullColStatus: {
     width: 110,
   },
+  fullColAuth: {
+    width: 150,
+    gap: 6,
+  },
   fullColShift: {
     width: 170,
   },
@@ -2502,6 +3006,72 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontWeight: '700',
   },
+  shiftTableScrollContent: {
+    paddingRight: 16,
+  },
+  shiftTableWrap: {
+    gap: 12,
+  },
+  shiftTableHeaderRow: {
+    minWidth: 930,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#d8e2ed',
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 12,
+  },
+  shiftTableRow: {
+    minWidth: 930,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#d8e2ed',
+    borderRadius: 14,
+    backgroundColor: '#ffffff',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    gap: 12,
+  },
+  shiftColIndex: {
+    width: 48,
+  },
+  shiftColName: {
+    width: 240,
+  },
+  shiftColTime: {
+    width: 190,
+  },
+  shiftColRules: {
+    width: 290,
+  },
+  shiftColActionsHeader: {
+    width: 110,
+    textAlign: 'center',
+  },
+  shiftColActions: {
+    width: 110,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  shiftIconBtn: {
+    width: 40,
+    height: 40,
+    borderWidth: 1,
+    borderColor: '#cfd8f6',
+    backgroundColor: '#eef2ff',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shiftIconBtnDanger: {
+    borderColor: '#f6c9c9',
+    backgroundColor: '#fff3f3',
+  },
   tableHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2553,6 +3123,54 @@ const styles = StyleSheet.create({
   },
   inactiveText: {
     color: '#c22a2a',
+  },
+  authPill: {
+    alignSelf: 'flex-start',
+    minHeight: 28,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  authPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  authPillProvisioned: {
+    borderColor: '#b7ead3',
+    backgroundColor: '#e8f9f1',
+  },
+  authPillTextProvisioned: {
+    color: '#0a7a5b',
+  },
+  authPillDisabled: {
+    borderColor: '#f2d7a7',
+    backgroundColor: '#fff5df',
+  },
+  authPillTextDisabled: {
+    color: '#8c5a00',
+  },
+  authPillError: {
+    borderColor: '#f6c9c9',
+    backgroundColor: '#fff3f3',
+  },
+  authPillTextError: {
+    color: '#c22a2a',
+  },
+  authPillPending: {
+    borderColor: '#cfd8f6',
+    backgroundColor: '#eef2ff',
+  },
+  authPillTextPending: {
+    color: '#3554a5',
+  },
+  authPillNotCreated: {
+    borderColor: '#d7dee8',
+    backgroundColor: '#f8fafc',
+  },
+  authPillTextNotCreated: {
+    color: '#526173',
   },
   rowActions: {
     flexDirection: 'row',
@@ -2695,14 +3313,235 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontWeight: '500',
   },
+  staffEditRowTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  staffEditIdentity: {
+    flex: 1,
+    gap: 4,
+  },
+  staffEditCode: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  staffEditName: {
+    color: colors.textPrimary,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  staffEditMeta: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  staffMetaPillRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    marginTop: 2,
+  },
+  staffMetaInlineText: {
+    flex: 1,
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  staffEditStatusPill: {
+    minHeight: 32,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  staffEditStatusPillActive: {
+    borderColor: '#b7ead3',
+    backgroundColor: '#e8f9f1',
+  },
+  staffEditStatusPillInactive: {
+    borderColor: '#f6c9c9',
+    backgroundColor: '#fff3f3',
+  },
+  staffEditStatusText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  staffEditStatusTextActive: {
+    color: '#0a7a5b',
+  },
+  staffEditStatusTextInactive: {
+    color: '#c22a2a',
+  },
+  staffEditActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
+  },
+  staffEditPrimaryBtn: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  staffEditPrimaryBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  staffEditDeleteBtn: {
+    minWidth: 104,
+    minHeight: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f5c8c8',
+    backgroundColor: '#fff5f5',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+  },
+  staffEditDeleteBtnText: {
+    color: colors.danger,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  staffDeactivateBtnModern: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 12,
+    backgroundColor: colors.danger,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  staffActivateBtnModern: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 12,
+    backgroundColor: colors.success,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  staffDeactivateBtnModernText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '800',
+  },
   formScreen: {
     flex: 1,
     backgroundColor: colors.bg,
   },
+  formStatusTexture: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.success,
+    overflow: 'hidden',
+    zIndex: 20,
+    elevation: 20,
+  },
+  formStatusTextureGlowTop: {
+    position: 'absolute',
+    top: -42,
+    right: -18,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    backgroundColor: '#30b28b',
+    opacity: 0.24,
+  },
+  formStatusTextureGlowBottom: {
+    position: 'absolute',
+    bottom: -54,
+    left: -24,
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    backgroundColor: '#05654d',
+    opacity: 0.22,
+  },
   formContent: {
     padding: 16,
-    gap: 12,
+    gap: 14,
     paddingBottom: 28,
+  },
+  editListContent: {
+    paddingHorizontal: 16,
+    gap: 14,
+    paddingBottom: 28,
+  },
+  staffFormHero: {
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#d8e2ed',
+    backgroundColor: '#f7fbff',
+    padding: 16,
+    gap: 12,
+  },
+  staffFormHeroTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
+  },
+  staffFormBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: colors.primarySoft,
+  },
+  staffFormBadgeText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  staffFormIntro: {
+    color: colors.textSecondary,
+    lineHeight: 21,
+    fontWeight: '500',
+  },
+  staffFormHeroStats: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  staffFormHeroStatCard: {
+    flex: 1,
+    minHeight: 74,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    gap: 4,
+  },
+  staffFormHeroStatLabel: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  staffFormHeroStatValue: {
+    color: colors.textPrimary,
+    fontSize: 20,
+    fontWeight: '800',
   },
   formHeader: {
     flexDirection: 'row',
@@ -2742,6 +3581,173 @@ const styles = StyleSheet.create({
     fontSize: 15,
     marginTop: 2,
     marginBottom: -2,
+  },
+  formSectionSubtitle: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 19,
+    marginBottom: 2,
+  },
+  authSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  accessHeroCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    backgroundColor: '#f7fbff',
+    padding: 14,
+    gap: 10,
+  },
+  accessHeroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  accessHeroBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#e7f3ff',
+    alignSelf: 'flex-start',
+  },
+  accessHeroBadgeText: {
+    color: '#1f5f9c',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    textTransform: 'uppercase',
+  },
+  accessHeroTitle: {
+    color: colors.textPrimary,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  accessHeroText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 19,
+  },
+  accessHeroStats: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  accessHeroStatCard: {
+    flex: 1,
+    minHeight: 74,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    gap: 4,
+  },
+  accessHeroStatLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  accessHeroStatValue: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  accessSectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 2,
+  },
+  accessSectionTitle: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  accessSectionMeta: {
+    color: colors.success,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  authMetaText: {
+    flex: 1,
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  authWarningText: {
+    color: '#8c5a00',
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  authErrorText: {
+    color: colors.danger,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  accessInfoPanel: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#dbe8f4',
+    backgroundColor: '#f8fbfe',
+    padding: 12,
+    gap: 4,
+  },
+  accessInfoTitle: {
+    color: '#1f5f9c',
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  accessInfoText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
+  },
+  authActionColumn: {
+    gap: 8,
+  },
+  secondaryActionBtn: {
+    minHeight: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#d1d9e4',
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  secondaryActionBtnText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  destructiveActionBtn: {
+    minHeight: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f5c8c8',
+    backgroundColor: '#fff5f5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  destructiveActionBtnText: {
+    color: colors.danger,
+    fontSize: 14,
+    fontWeight: '800',
   },
   dateFieldWrap: {
     gap: 6,

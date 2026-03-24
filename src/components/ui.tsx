@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -8,25 +8,54 @@ import {
   View,
   type TextInputProps,
 } from 'react-native';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import { colors } from '../theme/colors';
 
 export const Screen = ({ children }: { children: React.ReactNode }) => (
   <View style={styles.screen}>{children}</View>
 );
 
-export const Field = ({ label, ...props }: { label: string } & TextInputProps) => (
-  <View style={styles.fieldWrap}>
-    <Text style={styles.label}>{label}</Text>
-    <TextInput
-      style={[styles.input, props.editable === false && styles.inputDisabled]}
-      placeholderTextColor="#888"
-      autoCapitalize="none"
-      autoCorrect={false}
-      accessibilityLabel={label}
-      {...props}
-    />
-  </View>
-);
+export const Field = ({ label, secureTextEntry, ...props }: { label: string } & TextInputProps) => {
+  const isPasswordField = secureTextEntry === true;
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const resolvedSecureTextEntry = isPasswordField ? !passwordVisible : secureTextEntry;
+
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.label}>{label}</Text>
+      <View style={styles.inputWrap}>
+        <TextInput
+          style={[
+            styles.input,
+            isPasswordField && styles.inputWithAccessory,
+            props.editable === false && styles.inputDisabled,
+          ]}
+          placeholderTextColor="#888"
+          autoCapitalize="none"
+          autoCorrect={false}
+          accessibilityLabel={label}
+          secureTextEntry={resolvedSecureTextEntry}
+          {...props}
+        />
+        {isPasswordField ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={passwordVisible ? `Hide ${label}` : `Show ${label}`}
+            accessibilityHint="Toggles password visibility"
+            hitSlop={10}
+            onPress={() => setPasswordVisible(current => !current)}
+            style={({ pressed }) => [styles.inputAccessory, pressed && styles.inputAccessoryPressed]}>
+            <Ionicons
+              name={passwordVisible ? 'eye-off-outline' : 'eye-outline'}
+              size={20}
+              color={colors.textMuted}
+            />
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+};
 
 export const PrimaryButton = ({
   title,
@@ -74,6 +103,10 @@ const styles = StyleSheet.create({
   fieldWrap: {
     gap: 6,
   },
+  inputWrap: {
+    position: 'relative',
+    justifyContent: 'center',
+  },
   label: {
     fontSize: 13,
     fontWeight: '600',
@@ -89,9 +122,22 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 15,
   },
+  inputWithAccessory: {
+    paddingRight: 44,
+  },
   inputDisabled: {
     backgroundColor: colors.surfaceMuted,
     color: colors.textMuted,
+  },
+  inputAccessory: {
+    position: 'absolute',
+    right: 12,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inputAccessoryPressed: {
+    opacity: 0.7,
   },
   button: {
     backgroundColor: colors.primary,

@@ -28,6 +28,13 @@ export type ShopTabParamList = {
   Reports: undefined;
 };
 
+export type StaffTabParamList = {
+  Home: undefined;
+  Attendance: undefined;
+  Salary: undefined;
+  Profile: undefined;
+};
+
 export type ShopDrawerParamList = {
   ShopHome: undefined;
   ShopProfile: undefined;

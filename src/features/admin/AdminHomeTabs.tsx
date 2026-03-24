@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AdminTabParamList } from '../../types/navigation';
 import { AdminDashboardScreen } from './AdminDashboardScreen';
 import { AdminShopsStack } from './AdminShopsStack';
@@ -11,6 +12,9 @@ import { colors } from '../../theme/colors';
 const Tabs = createBottomTabNavigator<AdminTabParamList>();
 
 export function AdminHomeTabs() {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, 8);
+
   return (
     <Tabs.Navigator
       screenOptions={({ route }) => ({
@@ -27,9 +31,9 @@ export function AdminHomeTabs() {
           </View>
         ),
         tabBarStyle: {
-          height: 60,
+          height: 56 + bottomInset,
           paddingTop: 0,
-          paddingBottom: 0,
+          paddingBottom: bottomInset,
           borderTopWidth: 1,
           borderTopColor: '#d7dee8',
           backgroundColor: '#ffffff',

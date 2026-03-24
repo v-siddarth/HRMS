@@ -4,6 +4,7 @@ import { Card, PrimaryButton, Screen } from '../../components/ui';
 import { logout } from '../../services/authService';
 import { clearSession } from '../../store/authSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
+import { hrmsApi } from '../../store/hrmsApi';
 import { colors } from '../../theme/colors';
 
 export function AdminProfileScreen() {
@@ -12,6 +13,7 @@ export function AdminProfileScreen() {
 
   const onLogout = async () => {
     try {
+      dispatch(hrmsApi.util.resetApiState());
       await logout();
       dispatch(clearSession());
     } catch (error) {

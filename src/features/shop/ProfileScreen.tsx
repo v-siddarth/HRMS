@@ -5,6 +5,7 @@ import { logout } from '../../services/authService';
 import { clearSession, setUser } from '../../store/authSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
+  hrmsApi,
   useChangeShopManagerPasswordMutation,
   useDeleteShopManagerAccountMutation,
   useGetShopByIdQuery,
@@ -133,6 +134,7 @@ export function ProfileScreen() {
 
     try {
       await deleteAccount({ shopId, currentPassword: deletePassword.trim() }).unwrap();
+      dispatch(hrmsApi.util.resetApiState());
       await logout();
       dispatch(clearSession());
       Alert.alert('Account deleted', 'Your account and shop data have been deleted permanently.');
@@ -154,6 +156,7 @@ export function ProfileScreen() {
 
   const onLogout = async () => {
     try {
+      dispatch(hrmsApi.util.resetApiState());
       await logout();
       dispatch(clearSession());
     } catch (error) {

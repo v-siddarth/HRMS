@@ -13,8 +13,10 @@ import {
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import dayjs from 'dayjs';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import * as RNHTMLtoPDF from 'react-native-html-to-pdf';
 import Share from 'react-native-share';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Card, Field, PrimaryButton } from '../../components/ui';
 import { salaryCol } from '../../services/firebase';
 import { useAppSelector } from '../../store/hooks';
@@ -63,46 +65,116 @@ export function SalaryScreen() {
 function SalaryHomeScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const { data: shop } = useGetShopByIdQuery(shopId, { skip: !shopId });
+
+  const openDrawer = () => {
+    const parent = navigation.getParent?.()?.getParent?.();
+    if (parent?.openDrawer) {
+      parent.openDrawer();
+    }
+  };
 
   return (
     <View style={styles.page}>
-      <StatusBar backgroundColor="#0b8f6d" barStyle="light-content" />
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.banner}>
+        <View style={[styles.banner, { paddingTop: insets.top + 16 }]}>
           <View style={styles.headerGradientBase} />
-          <View style={styles.headerGradientMid} />
           <View style={styles.headerGradientGlowTop} />
           <View style={styles.headerGradientGlowBottom} />
-          <Text style={styles.bannerTitle} numberOfLines={1}>
-            {shop?.shopName ?? 'Salary'}
-          </Text>
-          <Text style={styles.bannerSub} numberOfLines={2}>
-            {shop?.address ?? '-'}
-          </Text>
-          <Text style={styles.bannerSub}>Powered by RVM Attend</Text>
-          <View style={styles.bannerDivider} />
-          <Text style={styles.bannerSection}>Salary Desk</Text>
+
+          <View style={styles.salaryHeaderTopRow}>
+            <View style={styles.salaryHeaderBadge}>
+              <Text style={styles.salaryHeaderBadgeText}>Salary Desk</Text>
+            </View>
+            <Pressable style={({ pressed }) => [styles.menuBtn, pressed && styles.menuBtnPressed]} onPress={openDrawer}>
+              <Ionicons name="menu" size={24} color="#ffffff" />
+            </Pressable>
+          </View>
+
+          <View style={styles.salaryHeaderTextBlock}>
+            <Text style={styles.bannerTitle} numberOfLines={1}>
+              {shop?.shopName ?? 'Salary'}
+            </Text>
+            <Text style={styles.bannerSub} numberOfLines={1}>
+              {shop?.address ?? 'Address not available'}
+            </Text>
+            <Text style={styles.bannerPowered}>Powered Nexora RVM Infotech</Text>
+          </View>
+
+          <View style={styles.salaryOverviewCard}>
+            <Text style={styles.salaryOverviewEyebrow}>Payroll Overview</Text>
+            <Text style={styles.salaryOverviewTitle}>Salary operations and reports in one place</Text>
+            <Text style={styles.salaryOverviewText}>
+              Generate monthly salary, track advances, review attendance-linked payroll inputs, and export reports from one polished desk.
+            </Text>
+            <View style={styles.salaryOverviewPoints}>
+              <View style={styles.salaryOverviewPoint}>
+                <Ionicons name="wallet-outline" size={16} color="#d6f8ed" />
+                <Text style={styles.salaryOverviewPointText}>Keep monthly payroll action-ready for active staff.</Text>
+              </View>
+              <View style={styles.salaryOverviewPoint}>
+                <Ionicons name="document-text-outline" size={16} color="#d6f8ed" />
+                <Text style={styles.salaryOverviewPointText}>Open salary, advance, and attendance reports from one workflow.</Text>
+              </View>
+            </View>
+          </View>
         </View>
 
-        <Card>
-          <Text style={styles.sectionTitle}>Salary</Text>
-          <View style={styles.actionGrid}>
-            <ActionTile icon="₹" tone="emerald" title="Generate Salary" onPress={() => navigation.navigate('SalaryGenerate')} />
-            <ActionTile icon="⊕" tone="amber" title="Pay Advance" onPress={() => navigation.navigate('AdvanceLoanEntry')} />
+        <View style={styles.bodyWrap}>
+          <View style={styles.salaryActionGrid}>
+            <ActionTile
+              icon="cash-outline"
+              tone="emerald"
+              title="Generate Salary"
+              description="Create or settle monthly salary rows for the selected payroll cycle."
+              onPress={() => navigation.navigate('SalaryGenerate')}
+            />
+            <ActionTile
+              icon="add-circle-outline"
+              tone="amber"
+              title="Pay Advance"
+              description="Record staff advance or loan entries with payroll deduction support."
+              onPress={() => navigation.navigate('AdvanceLoanEntry')}
+            />
+            <ActionTile
+              icon="calendar-outline"
+              tone="blue"
+              title="Monthwise Report"
+              description="Review monthly payroll status, paid totals, and pending settlements."
+              onPress={() => navigation.navigate('SalaryMonthwiseReport')}
+            />
+            <ActionTile
+              icon="people-outline"
+              tone="teal"
+              title="All Salary Report"
+              description="Open the full team salary report for the selected month and export it."
+              onPress={() => navigation.navigate('AllEmployeeSalaryReport')}
+            />
+            <ActionTile
+              icon="person-outline"
+              tone="violet"
+              title="Individual Annual"
+              description="Track one staff member’s annual salary trend and payment status."
+              onPress={() => navigation.navigate('IndividualSalaryAnnualReport')}
+            />
+            <ActionTile
+              icon="receipt-outline"
+              tone="red"
+              title="Advance Paid Report"
+              description="Audit advance and loan payouts with quick monthly totals."
+              onPress={() => navigation.navigate('AdvancePaidReport')}
+            />
+            <ActionTile
+              icon="time-outline"
+              tone="sky"
+              title="Attendance Report"
+              description="Review monthly attendance rows that influence salary operations."
+              onPress={() => navigation.navigate('MonthlyAttendanceReport')}
+            />
           </View>
-        </Card>
-
-        <Card>
-          <Text style={styles.sectionTitle}>Reports</Text>
-          <View style={styles.actionGrid}>
-            <ActionTile icon="◷" tone="blue" title="Monthwise Report" onPress={() => navigation.navigate('SalaryMonthwiseReport')} />
-            <ActionTile icon="▦" tone="teal" title="All Salary Report" onPress={() => navigation.navigate('AllEmployeeSalaryReport')} />
-            <ActionTile icon="◎" tone="violet" title="Individual Annual" onPress={() => navigation.navigate('IndividualSalaryAnnualReport')} />
-            <ActionTile icon="↦" tone="red" title="Advance Paid Report" onPress={() => navigation.navigate('AdvancePaidReport')} />
-            <ActionTile icon="◫" tone="sky" title="Attendance Report" onPress={() => navigation.navigate('MonthlyAttendanceReport')} />
-          </View>
-        </Card>
+        </View>
       </ScrollView>
     </View>
   );
@@ -111,6 +183,7 @@ function SalaryHomeScreen({ navigation }: { navigation: any }) {
 function SalaryGenerateScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const [month, setMonth] = useState(currentMonth());
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [markingPaidId, setMarkingPaidId] = useState('');
@@ -207,7 +280,9 @@ function SalaryGenerateScreen({ navigation }: { navigation: any }) {
           text: 'Confirm',
           style: 'default',
           onPress: () => {
-            void onMarkPaid(salaryId);
+            onMarkPaid(salaryId).catch(() => {
+              // handled in onMarkPaid
+            });
           },
         },
       ],
@@ -217,16 +292,56 @@ function SalaryGenerateScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={styles.page}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       <FlatList
         data={displayRows}
         keyExtractor={item => item.id}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.editListContent, { paddingTop: Math.max(insets.top + 38, 66) }]}
         ListHeaderComponent={
           <View style={styles.headerBlock}>
-            <ScreenHeader title="Generate Salary" onClose={() => navigation.goBack()} />
+            <View style={styles.staffFormHero}>
+              <View style={styles.staffFormHeroTop}>
+                <View style={styles.staffFormBadge}>
+                  <Text style={styles.staffFormBadgeText}>Salary Action</Text>
+                </View>
+                <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+                  <Text style={styles.closeText}>Close</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.formTitle}>Generate Salary</Text>
+              <Text style={styles.staffFormIntro}>
+                Generate payroll for the selected month, review paid versus pending rows, and mark settlements with confidence.
+              </Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.staffFormHeroStatsScroll}>
+                <View style={styles.staffFormHeroStats}>
+                  <View style={styles.staffFormHeroStatCard}>
+                    <Text style={styles.staffFormHeroStatLabel}>Visible Rows</Text>
+                    <Text style={styles.staffFormHeroStatValue}>{isLoading ? '...' : displayRows.length}</Text>
+                  </View>
+                  <View style={styles.staffFormHeroStatCard}>
+                    <Text style={styles.staffFormHeroStatLabel}>Pending</Text>
+                    <Text style={styles.staffFormHeroStatValue}>{pendingCount}</Text>
+                  </View>
+                  <View style={styles.staffFormHeroStatCard}>
+                    <Text style={styles.staffFormHeroStatLabel}>Month</Text>
+                    <Text style={styles.staffFormHeroStatValue}>{month}</Text>
+                  </View>
+                </View>
+              </ScrollView>
+            </View>
 
             <Card>
+              <View style={styles.salaryPanelHeader}>
+                <View style={styles.salaryPanelTitleBlock}>
+                  <Text style={styles.sectionTitle}>Payroll Controls</Text>
+                  <Text style={styles.salaryPanelMeta}>Select the payroll month and generate rows only when the cycle is ready.</Text>
+                </View>
+                <View style={[styles.resultsPill, styles.resultsPillTight]}>
+                  <Text style={styles.resultsPillLabel}>Status</Text>
+                  <Text style={styles.resultsPillValue}>{monthLocked ? 'Locked' : 'Open'}</Text>
+                </View>
+              </View>
               <View style={styles.monthRow}>
                 <View style={styles.monthFieldWrap}>
                   <Text style={styles.monthLabel}>Month</Text>
@@ -264,17 +379,30 @@ function SalaryGenerateScreen({ navigation }: { navigation: any }) {
               </Text>
             </Card>
 
-            <View style={styles.summaryRow}>
-              <SummaryCard label="Total Staff Nos" value={`${rows.length}`} tone="slate" />
-              <SummaryCard label="Paid Staff Nos" value={`${paidCount}`} tone="green" />
-              <SummaryCard label="Pending Staff Nos" value={`${pendingCount}`} tone="amber" />
-              <SummaryCard label="Net Amount" value={shortCurrency(totalNet)} tone="blue" />
-              <SummaryCard label="Paid Amount" value={shortCurrency(paidAmount)} tone="green" />
-              <SummaryCard label="Pending Amount" value={shortCurrency(pendingAmount)} tone="amber" />
-            </View>
+            <Card>
+              <View style={styles.salaryPanelHeader}>
+                <View style={styles.salaryPanelTitleBlock}>
+                  <Text style={styles.sectionTitle}>Salary Snapshot</Text>
+                  <Text style={styles.salaryPanelMeta}>A compact payroll summary for the selected month in a single horizontal line.</Text>
+                </View>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRowSingle}>
+                <SummaryCardCompact label="Total Staff" value={`${rows.length}`} tone="slate" />
+                <SummaryCardCompact label="Paid" value={`${paidCount}`} tone="green" />
+                <SummaryCardCompact label="Pending" value={`${pendingCount}`} tone="amber" />
+                <SummaryCardCompact label="Net Amount" value={shortCurrency(totalNet)} tone="blue" />
+                <SummaryCardCompact label="Paid Amount" value={shortCurrency(paidAmount)} tone="green" />
+                <SummaryCardCompact label="Pending Amt" value={shortCurrency(pendingAmount)} tone="amber" />
+              </ScrollView>
+            </Card>
 
             <Card>
-              <Text style={styles.sectionTitle}>Generated Salary Table</Text>
+              <View style={styles.salaryPanelHeader}>
+                <View style={styles.salaryPanelTitleBlock}>
+                  <Text style={styles.sectionTitle}>Generated Salary Table</Text>
+                  <Text style={styles.salaryPanelMeta}>Review payable rows and confirm salary disbursement directly from this table.</Text>
+                </View>
+              </View>
               <View style={styles.compactTableHeaderRow}>
                 <View style={[styles.compactTableCell, styles.compactTableHeaderCell, styles.compactNameCol]}>
                   <Text style={[styles.compactTableText, styles.compactTableHeaderText]} numberOfLines={1}>
@@ -334,6 +462,10 @@ function SalaryGenerateScreen({ navigation }: { navigation: any }) {
           );
         }}
       />
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
     </View>
   );
 }
@@ -341,6 +473,7 @@ function SalaryGenerateScreen({ navigation }: { navigation: any }) {
 function AdvanceLoanEntryScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const [month, setMonth] = useState(currentMonth());
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [employeeId, setEmployeeId] = useState('');
@@ -405,10 +538,48 @@ function AdvanceLoanEntryScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={styles.page}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <ScreenHeader title="Pay Advance / Loan" onClose={() => navigation.goBack()} />
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <ScrollView
+        contentContainerStyle={[styles.innerContent, { paddingTop: Math.max(insets.top + 38, 66) }]}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.staffFormHero}>
+          <View style={styles.staffFormHeroTop}>
+            <View style={styles.staffFormBadge}>
+              <Text style={styles.staffFormBadgeText}>Advance Entry</Text>
+            </View>
+            <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.formTitle}>Pay Advance / Loan</Text>
+          <Text style={styles.staffFormIntro}>
+            Record advance or loan payouts, assign them to the correct staff member, and keep payroll deductions aligned.
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.staffFormHeroStatsScroll}>
+            <View style={styles.staffFormHeroStats}>
+              <View style={styles.staffFormHeroStatCard}>
+                <Text style={styles.staffFormHeroStatLabel}>Entries</Text>
+                <Text style={styles.staffFormHeroStatValue}>{advances.length}</Text>
+              </View>
+              <View style={styles.staffFormHeroStatCard}>
+                <Text style={styles.staffFormHeroStatLabel}>Selected Type</Text>
+                <Text style={styles.staffFormHeroStatValue}>{entryType === 'advance' ? 'Advance' : 'Loan'}</Text>
+              </View>
+              <View style={styles.staffFormHeroStatCard}>
+                <Text style={styles.staffFormHeroStatLabel}>Month</Text>
+                <Text style={styles.staffFormHeroStatValue}>{month}</Text>
+              </View>
+            </View>
+          </ScrollView>
+        </View>
 
       <Card>
+        <View style={styles.salaryPanelHeader}>
+          <View style={styles.salaryPanelTitleBlock}>
+            <Text style={styles.sectionTitle}>Entry Details</Text>
+            <Text style={styles.salaryPanelMeta}>Capture the payout period, payment date, amount, and staff member in one clean flow.</Text>
+          </View>
+        </View>
         <View style={styles.monthRow}>
           <View style={styles.monthFieldWrap}>
             <Text style={styles.monthLabel}>Month</Text>
@@ -494,7 +665,26 @@ function AdvanceLoanEntryScreen({ navigation }: { navigation: any }) {
       </Card>
 
         <Card>
-          <Text style={styles.sectionTitle}>Recent Entries</Text>
+          <View style={styles.salaryPanelHeader}>
+            <View style={styles.salaryPanelTitleBlock}>
+              <Text style={styles.sectionTitle}>Advance Snapshot</Text>
+              <Text style={styles.salaryPanelMeta}>Quick visibility into the current month’s entry volume and value.</Text>
+            </View>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRowSingle}>
+            <SummaryCardCompact label="Entries" value={`${advances.length}`} tone="slate" />
+            <SummaryCardCompact label="Total Entered" value={shortCurrency(totalEntered)} tone="blue" />
+            <SummaryCardCompact label="Staff Tagged" value={`${new Set(advances.map(item => item.employeeId)).size}`} tone="green" />
+          </ScrollView>
+        </Card>
+
+        <Card>
+          <View style={styles.salaryPanelHeader}>
+            <View style={styles.salaryPanelTitleBlock}>
+              <Text style={styles.sectionTitle}>Recent Entries</Text>
+              <Text style={styles.salaryPanelMeta}>Review the latest recorded payouts before closing the payroll cycle.</Text>
+            </View>
+          </View>
           <TableFrame>
             <View style={styles.tableHeaderRow}>
               <TableCell text="Date" width={110} header />
@@ -518,6 +708,10 @@ function AdvanceLoanEntryScreen({ navigation }: { navigation: any }) {
           </TableFrame>
         </Card>
       </ScrollView>
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
     </View>
   );
 }
@@ -525,6 +719,7 @@ function AdvanceLoanEntryScreen({ navigation }: { navigation: any }) {
 function SalaryMonthwiseReportScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const [month, setMonth] = useState(currentMonth());
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -576,10 +771,30 @@ function SalaryMonthwiseReportScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={styles.page}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <ScreenHeader title="Salary Report Monthwise" onClose={() => navigation.goBack()} />
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <ScrollView
+        contentContainerStyle={[styles.innerContent, { paddingTop: Math.max(insets.top + 38, 66) }]}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.staffFormHero}>
+          <View style={styles.staffFormHeroTop}>
+            <View style={styles.staffFormBadge}>
+              <Text style={styles.staffFormBadgeText}>Salary Report</Text>
+            </View>
+            <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.formTitle}>Salary Report Monthwise</Text>
+          <Text style={styles.staffFormIntro}>Review one month of payroll, track payment status, and export the final report when needed.</Text>
+        </View>
 
       <Card>
+        <View style={styles.salaryPanelHeader}>
+          <View style={styles.salaryPanelTitleBlock}>
+            <Text style={styles.sectionTitle}>Month Filter</Text>
+            <Text style={styles.salaryPanelMeta}>Change the month to review payroll totals and settlement progress.</Text>
+          </View>
+        </View>
         <View style={styles.monthRow}>
           <View style={styles.monthFieldWrap}>
             <Text style={styles.monthLabel}>Month</Text>
@@ -608,13 +823,21 @@ function SalaryMonthwiseReportScreen({ navigation }: { navigation: any }) {
         )}
       </Card>
 
-      <View style={styles.summaryRow}>
-        <SummaryCard label="Total Staff Nos" value={`${rows.length}`} tone="slate" />
-        <SummaryCard label="Paid Staff Nos" value={`${paidCount}`} tone="green" />
-        <SummaryCard label="Pending Staff Nos" value={`${pendingCount}`} tone="amber" />
-        <SummaryCard label="Paid Amount" value={shortCurrency(paidAmount)} tone="green" />
-        <SummaryCard label="Pending Amount" value={shortCurrency(pendingAmount)} tone="amber" />
-      </View>
+      <Card>
+        <View style={styles.salaryPanelHeader}>
+          <View style={styles.salaryPanelTitleBlock}>
+            <Text style={styles.sectionTitle}>Monthly Snapshot</Text>
+            <Text style={styles.salaryPanelMeta}>Key payroll counts and amounts presented in one compact row.</Text>
+          </View>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRowSingle}>
+          <SummaryCardCompact label="Total Staff" value={`${rows.length}`} tone="slate" />
+          <SummaryCardCompact label="Paid" value={`${paidCount}`} tone="green" />
+          <SummaryCardCompact label="Pending" value={`${pendingCount}`} tone="amber" />
+          <SummaryCardCompact label="Paid Amount" value={shortCurrency(paidAmount)} tone="green" />
+          <SummaryCardCompact label="Pending Amt" value={shortCurrency(pendingAmount)} tone="amber" />
+        </ScrollView>
+      </Card>
 
         <Card>
           <View style={styles.reportActionsRow}>
@@ -656,6 +879,10 @@ function SalaryMonthwiseReportScreen({ navigation }: { navigation: any }) {
         <Text style={styles.sectionCount}>{isLoading ? 'Loading...' : `${rows.length} salary rows in ${month}`}</Text>
       </Card>
       </ScrollView>
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
     </View>
   );
 }
@@ -663,6 +890,7 @@ function SalaryMonthwiseReportScreen({ navigation }: { navigation: any }) {
 function AllEmployeeSalaryReportScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const [month, setMonth] = useState(currentMonth());
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -675,6 +903,13 @@ function AllEmployeeSalaryReportScreen({ navigation }: { navigation: any }) {
     employees.forEach(emp => map.set(emp.id, { name: emp.name, code: emp.employeeCode ?? '-', designation: emp.designation }));
     return map;
   }, [employees]);
+  const summary = useMemo(() => {
+    const paid = rows.filter(item => !!item.salaryPaidAt).length;
+    const pending = rows.length - paid;
+    const net = rows.reduce((acc, item) => acc + item.netSalary, 0);
+    const deduction = rows.reduce((acc, item) => acc + Number(item.advanceDeduction ?? 0), 0);
+    return { paid, pending, net, deduction };
+  }, [rows]);
 
   const onExportPdf = async () => {
     if (rows.length === 0) {
@@ -707,9 +942,29 @@ function AllEmployeeSalaryReportScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={styles.page}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <ScreenHeader title="All Employee Salary Report" onClose={() => navigation.goBack()} />
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <ScrollView
+        contentContainerStyle={[styles.innerContent, { paddingTop: Math.max(insets.top + 38, 66) }]}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.staffFormHero}>
+          <View style={styles.staffFormHeroTop}>
+            <View style={styles.staffFormBadge}>
+              <Text style={styles.staffFormBadgeText}>Salary Report</Text>
+            </View>
+            <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.formTitle}>All Employee Salary Report</Text>
+          <Text style={styles.staffFormIntro}>Open the full team salary report for a month, review totals, and export a clean payroll record.</Text>
+        </View>
         <Card>
+        <View style={styles.salaryPanelHeader}>
+          <View style={styles.salaryPanelTitleBlock}>
+            <Text style={styles.sectionTitle}>Month Filter</Text>
+            <Text style={styles.salaryPanelMeta}>Select the month to review all employee salary rows together.</Text>
+          </View>
+        </View>
         <View style={styles.monthRow}>
           <View style={styles.monthFieldWrap}>
             <Text style={styles.monthLabel}>Month</Text>
@@ -737,6 +992,22 @@ function AllEmployeeSalaryReportScreen({ navigation }: { navigation: any }) {
           </View>
         )}
       </Card>
+
+        <Card>
+          <View style={styles.salaryPanelHeader}>
+            <View style={styles.salaryPanelTitleBlock}>
+              <Text style={styles.sectionTitle}>Report Snapshot</Text>
+              <Text style={styles.salaryPanelMeta}>A quick view of rows, paid counts, pending counts, and payroll value.</Text>
+            </View>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRowSingle}>
+            <SummaryCardCompact label="Rows" value={`${rows.length}`} tone="slate" />
+            <SummaryCardCompact label="Paid" value={`${summary.paid}`} tone="green" />
+            <SummaryCardCompact label="Pending" value={`${summary.pending}`} tone="amber" />
+            <SummaryCardCompact label="Deduction" value={shortCurrency(summary.deduction)} tone="amber" />
+            <SummaryCardCompact label="Net Salary" value={shortCurrency(summary.net)} tone="blue" />
+          </ScrollView>
+        </Card>
 
         <Card>
         <View style={styles.reportActionsRow}>
@@ -782,6 +1053,10 @@ function AllEmployeeSalaryReportScreen({ navigation }: { navigation: any }) {
         ) : null}
         </Card>
       </ScrollView>
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
     </View>
   );
 }
@@ -789,6 +1064,7 @@ function AllEmployeeSalaryReportScreen({ navigation }: { navigation: any }) {
 function IndividualSalaryAnnualReportScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const [employeeId, setEmployeeId] = useState('');
   const [year, setYear] = useState(dayjs().format('YYYY'));
   const [showYearPicker, setShowYearPicker] = useState(false);
@@ -867,8 +1143,22 @@ function IndividualSalaryAnnualReportScreen({ navigation }: { navigation: any })
 
   return (
     <View style={styles.page}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <ScreenHeader title="Individual Salary Annual" onClose={() => navigation.goBack()} />
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <ScrollView
+        contentContainerStyle={[styles.innerContent, { paddingTop: Math.max(insets.top + 38, 66) }]}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.staffFormHero}>
+          <View style={styles.staffFormHeroTop}>
+            <View style={styles.staffFormBadge}>
+              <Text style={styles.staffFormBadgeText}>Salary Report</Text>
+            </View>
+            <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.formTitle}>Individual Salary Annual</Text>
+          <Text style={styles.staffFormIntro}>Review one staff member’s annual salary history with a cleaner filter and export workflow.</Text>
+        </View>
 
         <Card>
         <Text style={styles.sectionTitle}>Select Year and Staff</Text>
@@ -920,6 +1210,14 @@ function IndividualSalaryAnnualReportScreen({ navigation }: { navigation: any })
         </Card>
 
         <Card>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRowSingle}>
+          <SummaryCardCompact label="Months" value={`${rows.length}`} tone="slate" />
+          <SummaryCardCompact label="Annual Net" value={shortCurrency(annualNet)} tone="blue" />
+          <SummaryCardCompact label="Year" value={year} tone="green" />
+        </ScrollView>
+      </Card>
+
+        <Card>
         <View style={styles.reportActionsRow}>
           <Pressable
             style={({ pressed }) => [styles.reportActionBtn, pressed && !exporting ? styles.reportActionBtnPressed : undefined]}
@@ -952,6 +1250,10 @@ function IndividualSalaryAnnualReportScreen({ navigation }: { navigation: any })
           </TableFrame>
         </Card>
       </ScrollView>
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
     </View>
   );
 }
@@ -959,11 +1261,12 @@ function IndividualSalaryAnnualReportScreen({ navigation }: { navigation: any })
 function AdvancePaidReportScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const [month, setMonth] = useState(currentMonth());
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  const { data: advances = [], isLoading } = useGetEmployeeAdvancesQuery({ shopId, month }, { skip: !shopId });
+  const { data: advances = [] } = useGetEmployeeAdvancesQuery({ shopId, month }, { skip: !shopId });
   const { data: employees = [] } = useGetEmployeesQuery(shopId, { skip: !shopId });
 
   const employeeById = useMemo(() => {
@@ -1003,8 +1306,22 @@ function AdvancePaidReportScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={styles.page}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <ScreenHeader title="Advance Paid Report" onClose={() => navigation.goBack()} />
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <ScrollView
+        contentContainerStyle={[styles.innerContent, { paddingTop: Math.max(insets.top + 38, 66) }]}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.staffFormHero}>
+          <View style={styles.staffFormHeroTop}>
+            <View style={styles.staffFormBadge}>
+              <Text style={styles.staffFormBadgeText}>Advance Report</Text>
+            </View>
+            <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.formTitle}>Advance Paid Report</Text>
+          <Text style={styles.staffFormIntro}>Track advances and loans for the selected month with a cleaner totals summary and export action.</Text>
+        </View>
 
         <Card>
         <View style={styles.monthRow}>
@@ -1032,7 +1349,23 @@ function AdvancePaidReportScreen({ navigation }: { navigation: any }) {
           </View>
         )}
 
-        <Text style={styles.sectionCount}>{isLoading ? 'Loading...' : `Entries: ${advances.length} | Total: ${shortCurrency(total)}`}</Text>
+        </Card>
+
+        <Card>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRowSingle}>
+            <SummaryCardCompact label="Entries" value={`${advances.length}`} tone="slate" />
+            <SummaryCardCompact label="Total" value={shortCurrency(total)} tone="blue" />
+            <SummaryCardCompact
+              label="Advances"
+              value={`${advances.filter(item => item.type === 'advance').length}`}
+              tone="green"
+            />
+            <SummaryCardCompact
+              label="Loans"
+              value={`${advances.filter(item => item.type === 'loan').length}`}
+              tone="amber"
+            />
+          </ScrollView>
         </Card>
 
         <Card>
@@ -1068,6 +1401,10 @@ function AdvancePaidReportScreen({ navigation }: { navigation: any }) {
           </TableFrame>
         </Card>
       </ScrollView>
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
     </View>
   );
 }
@@ -1075,6 +1412,7 @@ function AdvancePaidReportScreen({ navigation }: { navigation: any }) {
 function MonthlyAttendanceReportScreen({ navigation }: { navigation: any }) {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
   const [fromDate, setFromDate] = useState(dayjs().startOf('month').format('YYYY-MM-DD'));
   const [toDate, setToDate] = useState(dayjs().endOf('month').format('YYYY-MM-DD'));
   const [pickerMode, setPickerMode] = useState<'from' | 'to' | null>(null);
@@ -1141,8 +1479,22 @@ function MonthlyAttendanceReportScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={styles.page}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <ScreenHeader title="Monthly Attendance Report" onClose={() => navigation.goBack()} />
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <ScrollView
+        contentContainerStyle={[styles.innerContent, { paddingTop: Math.max(insets.top + 38, 66) }]}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.staffFormHero}>
+          <View style={styles.staffFormHeroTop}>
+            <View style={styles.staffFormBadge}>
+              <Text style={styles.staffFormBadgeText}>Attendance Report</Text>
+            </View>
+            <Pressable style={styles.closeBtn} onPress={() => navigation.goBack()}>
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.formTitle}>Monthly Attendance Report</Text>
+          <Text style={styles.staffFormIntro}>Review the attendance rows affecting salary operations with a more polished and report-ready layout.</Text>
+        </View>
 
         <Card>
           <Text style={styles.sectionTitle}>Select 2 Dates</Text>
@@ -1155,14 +1507,22 @@ function MonthlyAttendanceReportScreen({ navigation }: { navigation: any }) {
           ) : null}
         </Card>
 
-        <View style={styles.summaryRow}>
-          <SummaryCard label="Rows" value={`${summary.total}`} tone="slate" />
-          <SummaryCard label="Present" value={`${summary.present}`} tone="green" />
-          <SummaryCard label="Absent" value={`${summary.absent}`} tone="amber" />
-          <SummaryCard label="Late" value={`${summary.late}`} tone="blue" />
-          <SummaryCard label="Half Day" value={`${summary.half_day}`} tone="slate" />
-          <SummaryCard label="Leave" value={`${summary.leave}`} tone="amber" />
-        </View>
+        <Card>
+          <View style={styles.salaryPanelHeader}>
+            <View style={styles.salaryPanelTitleBlock}>
+              <Text style={styles.sectionTitle}>Attendance Snapshot</Text>
+              <Text style={styles.salaryPanelMeta}>One-line summary of all attendance rows returned for the selected range.</Text>
+            </View>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRowSingle}>
+            <SummaryCardCompact label="Rows" value={`${summary.total}`} tone="slate" />
+            <SummaryCardCompact label="Present" value={`${summary.present}`} tone="green" />
+            <SummaryCardCompact label="Absent" value={`${summary.absent}`} tone="amber" />
+            <SummaryCardCompact label="Late" value={`${summary.late}`} tone="blue" />
+            <SummaryCardCompact label="Half Day" value={`${summary.half_day}`} tone="slate" />
+            <SummaryCardCompact label="Leave" value={`${summary.leave}`} tone="amber" />
+          </ScrollView>
+        </Card>
 
         <Card>
           <View style={styles.reportActionsRow}>
@@ -1231,17 +1591,10 @@ function MonthlyAttendanceReportScreen({ navigation }: { navigation: any }) {
           }}
         />
       ) : null}
-    </View>
-  );
-}
-
-function ScreenHeader({ title, onClose }: { title: string; onClose: () => void }) {
-  return (
-    <View style={styles.formHeader}>
-      <Text style={styles.formTitle}>{title}</Text>
-      <Pressable style={styles.closeBtn} onPress={onClose}>
-        <Text style={styles.closeText}>Close</Text>
-      </Pressable>
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
     </View>
   );
 }
@@ -1250,20 +1603,24 @@ function ActionTile({
   icon,
   tone,
   title,
+  description,
   onPress,
 }: {
   icon: string;
   tone: 'emerald' | 'amber' | 'blue' | 'teal' | 'violet' | 'red' | 'sky';
   title: string;
+  description: string;
   onPress: () => void;
 }) {
   const palette = salaryActionPalette(tone);
   return (
     <Pressable style={({ pressed }) => [styles.actionSquare, pressed && styles.actionSquarePressed]} onPress={onPress}>
+      <View style={[styles.actionAccent, { backgroundColor: palette.fg }]} />
       <View style={[styles.actionIconWrap, { backgroundColor: palette.bg, borderColor: palette.border }]}>
-        <Text style={[styles.actionIconText, { color: palette.fg }]}>{icon}</Text>
+        <Ionicons name={icon} size={20} color={palette.fg} />
       </View>
-      <Text style={styles.actionSquareText}>{title}</Text>
+      <Text style={styles.actionTileTitle}>{title}</Text>
+      <Text style={styles.actionTileDescription}>{description}</Text>
     </Pressable>
   );
 }
@@ -1281,7 +1638,7 @@ function salaryActionPalette(tone: 'emerald' | 'amber' | 'blue' | 'teal' | 'viol
   return palette[tone];
 }
 
-function SummaryCard({
+function SummaryCardCompact({
   label,
   value,
   tone,
@@ -1291,16 +1648,16 @@ function SummaryCard({
   tone: 'green' | 'amber' | 'slate' | 'blue';
 }) {
   const palette = {
-    green: { bg: '#e8f9f1', fg: '#0f9f63' },
-    amber: { bg: '#fff4df', fg: '#ba7a1d' },
-    slate: { bg: '#eef2f7', fg: '#334155' },
-    blue: { bg: '#e6effd', fg: '#1458bf' },
+    green: { bg: '#e8f9f1', fg: '#0f9f63', border: '#bde6d0' },
+    amber: { bg: '#fff4df', fg: '#ba7a1d', border: '#f1ddb4' },
+    slate: { bg: '#eef2f7', fg: '#334155', border: '#d8e1ea' },
+    blue: { bg: '#e6effd', fg: '#1458bf', border: '#c8dafe' },
   } as const;
 
   return (
-    <View style={[styles.summaryCard, { backgroundColor: palette[tone].bg }]}> 
-      <Text style={styles.summaryLabel}>{label}</Text>
-      <Text style={[styles.summaryValue, { color: palette[tone].fg }]} numberOfLines={1}>
+    <View style={[styles.summaryCompactCard, { backgroundColor: palette[tone].bg, borderColor: palette[tone].border }]}>
+      <Text style={styles.summaryCompactLabel}>{label}</Text>
+      <Text style={[styles.summaryCompactValue, { color: palette[tone].fg }]} numberOfLines={1}>
         {value}
       </Text>
     </View>
@@ -1443,79 +1800,150 @@ function safeHtml(value: string) {
 const styles = StyleSheet.create({
   page: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: '#f3f6fb',
   },
   content: {
-    paddingHorizontal: 16,
     paddingBottom: 24,
-    gap: 12,
+  },
+  innerContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 28,
+    gap: 14,
+  },
+  editListContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 28,
+    gap: 14,
   },
   headerBlock: {
-    gap: 10,
+    gap: 14,
   },
   banner: {
-    marginHorizontal: -16,
-    borderWidth: 1,
-    borderColor: '#0f8f6f',
-    backgroundColor: '#0c8a69',
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
-    borderBottomLeftRadius: 14,
-    borderBottomRightRadius: 14,
-    paddingHorizontal: 14,
-    paddingTop: 16,
-    paddingBottom: 14,
-    gap: 4,
+    backgroundColor: colors.success,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    paddingHorizontal: 16,
+    paddingBottom: 18,
+    gap: 14,
     overflow: 'hidden',
   },
   headerGradientBase: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#0b8f6d',
   },
-  headerGradientMid: {
-    ...StyleSheet.absoluteFillObject,
-    top: '34%',
-    backgroundColor: '#0a7e60',
-  },
   headerGradientGlowTop: {
     position: 'absolute',
     top: -90,
-    right: -60,
+    right: -50,
     width: 240,
     height: 240,
     borderRadius: 120,
-    backgroundColor: '#3ac39f',
-    opacity: 0.34,
+    backgroundColor: '#30b28b',
+    opacity: 0.26,
   },
   headerGradientGlowBottom: {
     position: 'absolute',
-    bottom: -105,
-    left: -50,
-    width: 250,
-    height: 250,
-    borderRadius: 125,
+    bottom: -120,
+    left: -40,
+    width: 220,
+    height: 220,
+    borderRadius: 110,
     backgroundColor: '#06644d',
-    opacity: 0.5,
+    opacity: 0.3,
+  },
+  salaryHeaderTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  salaryHeaderBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+  },
+  salaryHeaderBadgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  menuBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(9, 82, 64, 0.9)',
+  },
+  menuBtnPressed: {
+    backgroundColor: '#085542',
+  },
+  salaryHeaderTextBlock: {
+    gap: 4,
   },
   bannerTitle: {
     color: '#ffffff',
-    fontSize: 33,
+    fontSize: 32,
     fontWeight: '900',
   },
   bannerSub: {
-    color: '#d7fff1',
-    fontSize: 15,
+    color: '#defbf1',
+    fontSize: 17,
     fontWeight: '700',
   },
-  bannerDivider: {
-    height: 1,
-    backgroundColor: '#62c7ab',
-    marginVertical: 6,
+  bannerPowered: {
+    color: '#c8f3e8',
+    fontSize: 14,
+    fontWeight: '600',
   },
-  bannerSection: {
+  salaryOverviewCard: {
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(6, 85, 64, 0.32)',
+    gap: 8,
+  },
+  salaryOverviewEyebrow: {
+    color: '#d6f8ed',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  salaryOverviewTitle: {
     color: '#ffffff',
+    fontSize: 22,
     fontWeight: '800',
-    fontSize: 20,
+  },
+  salaryOverviewText: {
+    color: '#e8fff7',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  salaryOverviewPoints: {
+    marginTop: 4,
+    gap: 8,
+  },
+  salaryOverviewPoint: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  salaryOverviewPointText: {
+    flex: 1,
+    color: '#dffbf1',
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  bodyWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    gap: 14,
   },
   sectionTitle: {
     color: colors.textPrimary,
@@ -1554,49 +1982,61 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 10,
   },
+  salaryActionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
   actionSquare: {
-    width: '48%',
-    minHeight: 120,
-    borderWidth: 1.5,
-    borderColor: '#cfd9e6',
-    borderRadius: 14,
+    width: '47.5%',
+    minHeight: 188,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    borderRadius: 18,
     backgroundColor: '#ffffff',
-    paddingHorizontal: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.05,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 10,
-    elevation: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.06,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 12,
+    elevation: 2,
   },
   actionSquarePressed: {
-    backgroundColor: '#f2f8fd',
-    borderColor: '#b7c8de',
+    backgroundColor: '#f8fbff',
+    borderColor: '#c9d6e6',
+  },
+  actionAccent: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 4,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
   },
   actionIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef3f9',
     borderWidth: 1,
-    borderColor: '#d8e2ed',
   },
-  actionIconText: {
-    color: '#334155',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  actionSquareText: {
+  actionTileTitle: {
     color: colors.textPrimary,
     fontWeight: '800',
-    fontSize: 17,
-    lineHeight: 22,
-    textAlign: 'center',
+    fontSize: 18,
+    lineHeight: 24,
+    marginTop: 14,
+  },
+  actionTileDescription: {
+    marginTop: 8,
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
   },
   monthRow: {
     flexDirection: 'row',
@@ -1662,6 +2102,98 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
   },
+  formStatusTexture: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.success,
+    overflow: 'hidden',
+    zIndex: 20,
+    elevation: 20,
+  },
+  formStatusTextureGlowTop: {
+    position: 'absolute',
+    top: -42,
+    right: -18,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    backgroundColor: '#30b28b',
+    opacity: 0.24,
+  },
+  formStatusTextureGlowBottom: {
+    position: 'absolute',
+    bottom: -54,
+    left: -24,
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    backgroundColor: '#05654d',
+    opacity: 0.22,
+  },
+  staffFormHero: {
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#d8e2ed',
+    backgroundColor: '#f7fbff',
+    padding: 16,
+    gap: 12,
+  },
+  staffFormHeroTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
+  },
+  staffFormBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: colors.primarySoft,
+  },
+  staffFormBadgeText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  staffFormIntro: {
+    color: colors.textSecondary,
+    lineHeight: 21,
+    fontWeight: '500',
+  },
+  staffFormHeroStats: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  staffFormHeroStatsScroll: {
+    paddingRight: 4,
+  },
+  staffFormHeroStatCard: {
+    flex: 1,
+    minWidth: 112,
+    minHeight: 74,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    gap: 4,
+  },
+  staffFormHeroStatLabel: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  staffFormHeroStatValue: {
+    color: colors.textPrimary,
+    fontSize: 20,
+    fontWeight: '800',
+  },
   summaryRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1687,6 +2219,73 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 20,
     maxWidth: '100%',
+  },
+  summaryRowSingle: {
+    gap: 8,
+    paddingRight: 4,
+  },
+  summaryCompactCard: {
+    minWidth: 118,
+    minHeight: 66,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    gap: 4,
+  },
+  summaryCompactLabel: {
+    color: colors.textMuted,
+    fontWeight: '700',
+    fontSize: 11,
+    textTransform: 'uppercase',
+  },
+  summaryCompactValue: {
+    fontWeight: '800',
+    fontSize: 20,
+  },
+  salaryPanelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 10,
+  },
+  salaryPanelTitleBlock: {
+    flex: 1,
+    gap: 4,
+  },
+  salaryPanelMeta: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  resultsPill: {
+    minWidth: 72,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  resultsPillTight: {
+    minWidth: 78,
+  },
+  resultsPillLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  resultsPillValue: {
+    color: colors.textPrimary,
+    fontSize: 18,
+    fontWeight: '800',
   },
   tableHeaderRow: {
     flexDirection: 'row',

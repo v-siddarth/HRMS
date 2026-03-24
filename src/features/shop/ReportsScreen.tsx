@@ -1,20 +1,22 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import dayjs from 'dayjs';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import RNFS from 'react-native-fs';
 import * as RNHTMLtoPDF from 'react-native-html-to-pdf';
 import Share from 'react-native-share';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import XLSX from 'xlsx';
-import { Card, Screen, ValueRow } from '../../components/ui';
+import { Card } from '../../components/ui';
 import { useAppSelector } from '../../store/hooks';
 import {
   useGetAttendanceReportQuery,
   useGetEmployeeAdvancesQuery,
   useGetEmployeesQuery,
   useGetSalaryReportQuery,
+  useGetShopWeeklyShiftAssignmentsQuery,
   useGetShiftsQuery,
-  useGetWeeklyShiftPlanQuery,
 } from '../../store/hrmsApi';
 import { currentMonth, formatDisplayDate, formatDisplayDateTime24H, todayDate } from '../../utils/date';
 import { colors } from '../../theme/colors';
@@ -29,6 +31,7 @@ interface GeneratedFile {
 export function ReportsScreen() {
   const user = useAppSelector(state => state.auth.user);
   const shopId = user?.shopId ?? '';
+  const insets = useSafeAreaInsets();
 
   const [fromDate, setFromDate] = useState(`${currentMonth()}-01`);
   const [toDate, setToDate] = useState(dayjs(`${currentMonth()}-01`).endOf('month').format('YYYY-MM-DD'));
@@ -46,9 +49,9 @@ export function ReportsScreen() {
   const { data: salaries = [], isLoading: loadingSalary } = useGetSalaryReportQuery({ shopId, month }, { skip: !shopId });
   const { data: advances = [], isLoading: loadingAdvances } = useGetEmployeeAdvancesQuery({ shopId, month }, { skip: !shopId });
   const { data: shifts = [], isLoading: loadingShifts } = useGetShiftsQuery(shopId, { skip: !shopId });
-  const { data: weeklyPlans = [], isLoading: loadingWeeklyPlans } = useGetWeeklyShiftPlanQuery(
-    { shopId, weekStartDate },
-    { skip: !shopId || !weekStartDate },
+  const { data: weeklyAssignments = [], isLoading: loadingWeeklyAssignments } = useGetShopWeeklyShiftAssignmentsQuery(
+    { shopId },
+    { skip: !shopId },
   );
 
   const employeeById = useMemo(() => {
@@ -116,10 +119,20 @@ export function ReportsScreen() {
 
   const weeklyPlanSummary = useMemo(
     () => ({
-      rows: weeklyPlans.length,
-      assignedEmployees: new Set(weeklyPlans.map(item => item.employeeId)).size,
+      rows: weeklyAssignments.length,
+      assignedEmployees: new Set(weeklyAssignments.map(item => item.staffId)).size,
     }),
-    [weeklyPlans],
+    [weeklyAssignments],
+  );
+  const totalExports = generatedFiles.length;
+  const totalRowsAcrossReports =
+    attendance.length + salaries.length + advances.length + weeklyAssignments.length;
+  const scrollContentStyle = useMemo(
+    () => ({
+      ...styles.content,
+      paddingTop: Math.max(insets.top + 16, 32),
+    }),
+    [insets.top],
   );
 
   const onPickDate = (event: DateTimePickerEvent, selectedDate?: Date) => {
@@ -198,17 +211,20 @@ export function ReportsScreen() {
   };
 
   const exportShiftPlanExcel = async () => {
-    const rows = weeklyPlans.map(item => ({
-      WeekStartDate: item.weekStartDate,
-      Day: item.dayOfWeek.toUpperCase(),
-      StaffCode: employeeById.get(item.employeeId)?.code ?? '-',
-      Staff: employeeById.get(item.employeeId)?.name ?? item.employeeId,
-      Shift: shiftById.get(item.shiftId)?.name ?? item.shiftId,
-      ShiftTime: shiftById.get(item.shiftId)
-        ? `${shiftById.get(item.shiftId)?.startTime}-${shiftById.get(item.shiftId)?.endTime}`
-        : '-',
+    const rows = weeklyAssignments.map(item => ({
+      WeekReference: weekStartDate,
+      Day: plannerDayLabel(item.dayOfWeek),
+      StaffCode: employeeById.get(item.staffId)?.code ?? '-',
+      Staff: employeeById.get(item.staffId)?.name ?? item.staffId,
+      Assignment: item.isOff ? 'Off Day' : shiftById.get(item.shiftId ?? '')?.name ?? item.shiftId ?? 'Not assigned',
+      ShiftTime:
+        item.isOff
+          ? 'Off day'
+          : shiftById.get(item.shiftId ?? '')
+            ? `${shiftById.get(item.shiftId ?? '')?.startTime}-${shiftById.get(item.shiftId ?? '')?.endTime}`
+            : '-',
     }));
-    await exportExcel('Shift Plan Excel', `shift_plan_${weekStartDate}`, 'ShiftPlan', rows);
+    await exportExcel('Shift Assignment Excel', `shift_assignment_${weekStartDate}`, 'ShiftAssignments', rows);
   };
 
   const exportAttendancePdf = async () => {
@@ -228,7 +244,7 @@ export function ReportsScreen() {
       attendance,
       salaries,
       advances,
-      weeklyPlans,
+      weeklyAssignments,
       employeeById,
       shiftById,
       attendanceSummary,
@@ -297,15 +313,61 @@ export function ReportsScreen() {
   };
 
   return (
-    <Screen>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.headerWrap}>
-          <Text style={styles.title}>Reports Center</Text>
-          <Text style={styles.subtitle}>Excel-style table reports for attendance, salary, staff, advances and weekly shift plans.</Text>
+    <View style={styles.page}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <ScrollView
+        contentContainerStyle={scrollContentStyle}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.banner}>
+          <View style={styles.headerGradientBase} />
+          <View style={styles.headerGradientGlowTop} />
+          <View style={styles.headerGradientGlowBottom} />
+
+          <View style={styles.reportsHeaderTopRow}>
+            <View style={styles.reportsHeaderBadge}>
+              <Text style={styles.reportsHeaderBadgeText}>Reports Center</Text>
+            </View>
+            <View style={styles.reportsHeaderAction}>
+              <Ionicons name="analytics-outline" size={22} color="#ffffff" />
+            </View>
+          </View>
+
+          <View style={styles.reportsHeaderTextBlock}>
+            <Text style={styles.bannerTitle}>Operational Reports</Text>
+            <Text style={styles.bannerSub}>Attendance, salary, staff, advances, and weekly shift assignments in one workspace.</Text>
+            <Text style={styles.bannerPowered}>Built for daily exports and quick review</Text>
+          </View>
+
+          <View style={styles.reportsOverviewCard}>
+            <Text style={styles.reportsOverviewEyebrow}>Overview</Text>
+            <Text style={styles.reportsOverviewTitle}>Easier access to the reports that matter most</Text>
+            <Text style={styles.reportsOverviewText}>
+              Filter once, scan key metrics faster, export confidently, and keep generated files easy to access.
+            </Text>
+            <View style={styles.reportsOverviewStats}>
+              <View style={styles.reportsOverviewStatCard}>
+                <Text style={styles.reportsOverviewStatLabel}>Report Rows</Text>
+                <Text style={styles.reportsOverviewStatValue}>{totalRowsAcrossReports}</Text>
+              </View>
+              <View style={styles.reportsOverviewStatCard}>
+                <Text style={styles.reportsOverviewStatLabel}>Exports Ready</Text>
+                <Text style={styles.reportsOverviewStatValue}>{totalExports}</Text>
+              </View>
+              <View style={[styles.reportsOverviewStatCard, styles.reportsOverviewStatCardWide]}>
+                <Text style={styles.reportsOverviewStatLabel}>Month</Text>
+                <Text style={styles.reportsOverviewStatValue}>{month}</Text>
+              </View>
+            </View>
+          </View>
         </View>
 
         <Card>
-          <Text style={styles.sectionTitle}>Filters</Text>
+          <View style={styles.panelHeader}>
+            <View style={styles.panelTitleBlock}>
+              <Text style={styles.sectionTitle}>Filters</Text>
+              <Text style={styles.panelMeta}>Set one date range and reporting month so every section stays aligned and easier to compare.</Text>
+            </View>
+          </View>
           <View style={styles.inputRow}>
             <DateField label="From" value={formatDisplayDate(fromDate)} onPress={() => setPickerMode('fromDate')} />
             <DateField label="To" value={formatDisplayDate(toDate)} onPress={() => setPickerMode('toDate')} />
@@ -318,42 +380,83 @@ export function ReportsScreen() {
         </Card>
 
         <Card>
-          <Text style={styles.sectionTitle}>Attendance Summary</Text>
-          <SummaryLine label="Rows" value={loadingAttendance ? '...' : `${attendance.length}`} />
-          <SummaryLine label="Present" value={loadingAttendance ? '...' : `${attendanceSummary.present}`} />
-          <SummaryLine label="Leave" value={loadingAttendance ? '...' : `${attendanceSummary.leave}`} />
-          <SummaryLine label="Absent" value={loadingAttendance ? '...' : `${attendanceSummary.absent}`} />
-          <SummaryLine label="Late" value={loadingAttendance ? '...' : `${attendanceSummary.late}`} />
-          <SummaryLine label="Half Day" value={loadingAttendance ? '...' : `${attendanceSummary.half_day}`} />
+          <View style={styles.panelHeader}>
+            <View style={styles.panelTitleBlock}>
+              <Text style={styles.sectionTitle}>Attendance Summary</Text>
+              <Text style={styles.panelMeta}>Core attendance counts arranged in a single horizontal summary row.</Text>
+            </View>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRowSingle}>
+            <SummaryCardCompact label="Rows" value={loadingAttendance ? '...' : `${attendance.length}`} tone="slate" />
+            <SummaryCardCompact label="Present" value={loadingAttendance ? '...' : `${attendanceSummary.present}`} tone="green" />
+            <SummaryCardCompact label="Leave" value={loadingAttendance ? '...' : `${attendanceSummary.leave}`} tone="blue" />
+            <SummaryCardCompact label="Absent" value={loadingAttendance ? '...' : `${attendanceSummary.absent}`} tone="red" />
+            <SummaryCardCompact label="Late" value={loadingAttendance ? '...' : `${attendanceSummary.late}`} tone="amber" />
+            <SummaryCardCompact label="Half Day" value={loadingAttendance ? '...' : `${attendanceSummary.half_day}`} tone="slate" />
+          </ScrollView>
         </Card>
 
         <Card>
-          <Text style={styles.sectionTitle}>Salary Summary</Text>
-          <SummaryLine label="Rows" value={loadingSalary ? '...' : `${salaries.length}`} />
-          <SummaryLine label="Paid Staff" value={loadingSalary ? '...' : `${salarySummary.paid}`} />
-          <SummaryLine label="Pending Staff" value={loadingSalary ? '...' : `${salarySummary.pending}`} />
-          <SummaryLine label="Gross Amount" value={loadingSalary ? '...' : shortCurrency(salarySummary.gross)} />
-          <SummaryLine label="Advance Deduction" value={loadingSalary ? '...' : shortCurrency(salarySummary.advanceDeduction)} />
-          <SummaryLine label="Net Amount" value={loadingSalary ? '...' : shortCurrency(salarySummary.net)} />
+          <View style={styles.panelHeader}>
+            <View style={styles.panelTitleBlock}>
+              <Text style={styles.sectionTitle}>Salary Summary</Text>
+              <Text style={styles.panelMeta}>Quick payroll visibility with paid counts, pending counts, and key amount totals.</Text>
+            </View>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRowSingle}>
+            <SummaryCardCompact label="Rows" value={loadingSalary ? '...' : `${salaries.length}`} tone="slate" />
+            <SummaryCardCompact label="Paid Staff" value={loadingSalary ? '...' : `${salarySummary.paid}`} tone="green" />
+            <SummaryCardCompact label="Pending" value={loadingSalary ? '...' : `${salarySummary.pending}`} tone="amber" />
+            <SummaryCardCompact label="Gross" value={loadingSalary ? '...' : shortCurrency(salarySummary.gross)} tone="blue" />
+            <SummaryCardCompact
+              label="Deduction"
+              value={loadingSalary ? '...' : shortCurrency(salarySummary.advanceDeduction)}
+              tone="amber"
+            />
+            <SummaryCardCompact label="Net" value={loadingSalary ? '...' : shortCurrency(salarySummary.net)} tone="green" />
+          </ScrollView>
         </Card>
 
         <Card>
-          <Text style={styles.sectionTitle}>Advance / Loan Summary</Text>
-          <SummaryLine label="Entries" value={loadingAdvances ? '...' : `${advances.length}`} />
-          <SummaryLine label="Advance Total" value={loadingAdvances ? '...' : shortCurrency(advanceSummary.advance)} />
-          <SummaryLine label="Loan Total" value={loadingAdvances ? '...' : shortCurrency(advanceSummary.loan)} />
-          <SummaryLine label="Total" value={loadingAdvances ? '...' : shortCurrency(advanceSummary.total)} />
+          <View style={styles.panelHeader}>
+            <View style={styles.panelTitleBlock}>
+              <Text style={styles.sectionTitle}>Advance / Loan Summary</Text>
+              <Text style={styles.panelMeta}>Monitor entry counts and the split between advances and loans without leaving the screen.</Text>
+            </View>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRowSingle}>
+            <SummaryCardCompact label="Entries" value={loadingAdvances ? '...' : `${advances.length}`} tone="slate" />
+            <SummaryCardCompact label="Advance" value={loadingAdvances ? '...' : shortCurrency(advanceSummary.advance)} tone="green" />
+            <SummaryCardCompact label="Loan" value={loadingAdvances ? '...' : shortCurrency(advanceSummary.loan)} tone="amber" />
+            <SummaryCardCompact label="Total" value={loadingAdvances ? '...' : shortCurrency(advanceSummary.total)} tone="blue" />
+          </ScrollView>
         </Card>
 
         <Card>
-          <Text style={styles.sectionTitle}>Weekly Shift Plan Summary</Text>
-          <SummaryLine label="Rows" value={loadingWeeklyPlans ? '...' : `${weeklyPlanSummary.rows}`} />
-          <SummaryLine label="Assigned Staff" value={loadingWeeklyPlans ? '...' : `${weeklyPlanSummary.assignedEmployees}`} />
-          <SummaryLine label="Shift Masters" value={loadingShifts ? '...' : `${shifts.length}`} />
+          <View style={styles.panelHeader}>
+            <View style={styles.panelTitleBlock}>
+              <Text style={styles.sectionTitle}>Weekly Shift Assignment Summary</Text>
+              <Text style={styles.panelMeta}>See how many recurring assignment rows are available and how widely the team is assigned.</Text>
+            </View>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRowSingle}>
+            <SummaryCardCompact label="Rows" value={loadingWeeklyAssignments ? '...' : `${weeklyPlanSummary.rows}`} tone="slate" />
+            <SummaryCardCompact
+              label="Assigned Staff"
+              value={loadingWeeklyAssignments ? '...' : `${weeklyPlanSummary.assignedEmployees}`}
+              tone="green"
+            />
+            <SummaryCardCompact label="Shift Masters" value={loadingShifts ? '...' : `${shifts.length}`} tone="blue" />
+          </ScrollView>
         </Card>
 
         <Card>
-          <Text style={styles.sectionTitle}>Attendance Table</Text>
+          <View style={styles.panelHeader}>
+            <View style={styles.panelTitleBlock}>
+              <Text style={styles.sectionTitle}>Attendance Table</Text>
+              <Text style={styles.panelMeta}>Detailed attendance rows for the selected range with staff code, role, status, and source.</Text>
+            </View>
+          </View>
           <ReportTable
             columns={[
               { key: 'date', title: 'Date', width: 100 },
@@ -376,7 +479,12 @@ export function ReportsScreen() {
         </Card>
 
         <Card>
-          <Text style={styles.sectionTitle}>Salary Table</Text>
+          <View style={styles.panelHeader}>
+            <View style={styles.panelTitleBlock}>
+              <Text style={styles.sectionTitle}>Salary Table</Text>
+              <Text style={styles.panelMeta}>Monthly salary rows with present days, deductions, net salary, and payment status.</Text>
+            </View>
+          </View>
           <ReportTable
             columns={[
               { key: 'code', title: 'Code', width: 95 },
@@ -405,7 +513,12 @@ export function ReportsScreen() {
         </Card>
 
         <Card>
-          <Text style={styles.sectionTitle}>Advance / Loan Table</Text>
+          <View style={styles.panelHeader}>
+            <View style={styles.panelTitleBlock}>
+              <Text style={styles.sectionTitle}>Advance / Loan Table</Text>
+              <Text style={styles.panelMeta}>Reference every payout entry with date, staff mapping, entry type, and notes.</Text>
+            </View>
+          </View>
           <ReportTable
             columns={[
               { key: 'date', title: 'Date', width: 100 },
@@ -428,45 +541,71 @@ export function ReportsScreen() {
         </Card>
 
         <Card>
-          <Text style={styles.sectionTitle}>Weekly Shift Plan Table</Text>
+          <View style={styles.panelHeader}>
+            <View style={styles.panelTitleBlock}>
+              <Text style={styles.sectionTitle}>Weekly Shift Assignment Table</Text>
+              <Text style={styles.panelMeta}>Recurring weekly shift assignments for staff, including off days and mapped shift timings.</Text>
+            </View>
+          </View>
           <ReportTable
             columns={[
               { key: 'day', title: 'Day', width: 90 },
               { key: 'code', title: 'Code', width: 95 },
               { key: 'staff', title: 'Staff', width: 170 },
-              { key: 'shift', title: 'Shift', width: 150 },
+              { key: 'assignment', title: 'Assignment', width: 150 },
               { key: 'time', title: 'Time', width: 150 },
             ]}
-            rows={weeklyPlans.map(item => ({
-              day: item.dayOfWeek.toUpperCase(),
-              code: employeeById.get(item.employeeId)?.code ?? '-',
-              staff: employeeById.get(item.employeeId)?.name ?? item.employeeId,
-              shift: shiftById.get(item.shiftId)?.name ?? item.shiftId,
-              time: shiftById.get(item.shiftId)
-                ? `${shiftById.get(item.shiftId)?.startTime}-${shiftById.get(item.shiftId)?.endTime}`
-                : '-',
+            rows={weeklyAssignments.map(item => ({
+              day: plannerDayLabel(item.dayOfWeek),
+              code: employeeById.get(item.staffId)?.code ?? '-',
+              staff: employeeById.get(item.staffId)?.name ?? item.staffId,
+              assignment: item.isOff ? 'Off Day' : shiftById.get(item.shiftId ?? '')?.name ?? item.shiftId ?? 'Not assigned',
+              time:
+                item.isOff
+                  ? 'Off day'
+                  : shiftById.get(item.shiftId ?? '')
+                    ? `${shiftById.get(item.shiftId ?? '')?.startTime}-${shiftById.get(item.shiftId ?? '')?.endTime}`
+                    : '-',
             }))}
-            loading={loadingWeeklyPlans}
+            loading={loadingWeeklyAssignments}
           />
         </Card>
 
         <Card>
-          <Text style={styles.sectionTitle}>Export Reports</Text>
-          <View style={styles.actionsWrap}>
-            <ActionButton title="Attendance PDF" onPress={exportAttendancePdf} disabled={exporting} />
-            <ActionButton title="Salary PDF" onPress={exportSalaryPdf} disabled={exporting} />
-            <ActionButton title="Complete PDF" onPress={exportCompletePdf} disabled={exporting} strong />
-            <ActionButton title="Attendance Excel" onPress={exportAttendanceExcel} disabled={exporting} />
-            <ActionButton title="Salary Excel" onPress={exportSalaryExcel} disabled={exporting} />
-            <ActionButton title="Advance Excel" onPress={exportAdvancesExcel} disabled={exporting} />
-            <ActionButton title="Staff Excel" onPress={exportStaffExcel} disabled={exporting} />
-            <ActionButton title="Shift Plan Excel" onPress={exportShiftPlanExcel} disabled={exporting} />
+          <View style={styles.panelHeader}>
+            <View style={styles.panelTitleBlock}>
+              <Text style={styles.sectionTitle}>Export Reports</Text>
+              <Text style={styles.panelMeta}>Use the most common exports first, with PDF and Excel actions grouped for faster access.</Text>
+            </View>
+          </View>
+          <View style={styles.exportSection}>
+            <Text style={styles.exportGroupTitle}>PDF Exports</Text>
+            <View style={styles.actionsWrap}>
+              <ActionButton title="Attendance PDF" onPress={exportAttendancePdf} disabled={exporting} />
+              <ActionButton title="Salary PDF" onPress={exportSalaryPdf} disabled={exporting} />
+              <ActionButton title="Complete PDF" onPress={exportCompletePdf} disabled={exporting} strong />
+            </View>
+          </View>
+          <View style={styles.exportSection}>
+            <Text style={styles.exportGroupTitle}>Excel Exports</Text>
+            <View style={styles.actionsWrap}>
+              <ActionButton title="Attendance Excel" onPress={exportAttendanceExcel} disabled={exporting} />
+              <ActionButton title="Salary Excel" onPress={exportSalaryExcel} disabled={exporting} />
+              <ActionButton title="Advance Excel" onPress={exportAdvancesExcel} disabled={exporting} />
+              <ActionButton title="Staff Excel" onPress={exportStaffExcel} disabled={exporting} />
+              <ActionButton title="Shift Assignment Excel" onPress={exportShiftPlanExcel} disabled={exporting} />
+            </View>
           </View>
           {exporting && <Text style={styles.exportingText}>Exporting report...</Text>}
         </Card>
 
         <Card>
-          <Text style={styles.sectionTitle}>Generated Files</Text>
+          <View style={styles.panelHeader}>
+            <View style={styles.panelTitleBlock}>
+              <Text style={styles.sectionTitle}>Generated Files</Text>
+              <Text style={styles.panelMeta}>Recently generated files stay visible here so they are easy to share right away.</Text>
+            </View>
+          </View>
           {generatedFiles.length === 0 ? (
             <Text style={styles.emptyText}>No files generated yet.</Text>
           ) : (
@@ -485,7 +624,7 @@ export function ReportsScreen() {
                 </View>
               ))}
             </View>
-          )}
+            )}
         </Card>
       </ScrollView>
 
@@ -506,7 +645,11 @@ export function ReportsScreen() {
           </View>
         </View>
       )}
-    </Screen>
+      <View pointerEvents="none" style={[styles.formStatusTexture, { height: Math.max(insets.top + 26, 54) }]}>
+        <View style={styles.formStatusTextureGlowTop} />
+        <View style={styles.formStatusTextureGlowBottom} />
+      </View>
+    </View>
   );
 }
 
@@ -550,10 +693,6 @@ function DateField({ label, value, onPress }: { label: string; value: string; on
   );
 }
 
-function SummaryLine({ label, value }: { label: string; value: string }) {
-  return <ValueRow label={label} value={value} />;
-}
-
 function ActionButton({
   title,
   onPress,
@@ -577,7 +716,7 @@ function ActionButton({
       disabled={disabled}>
       <View style={styles.actionBtnInner}>
         <View style={[styles.actionBtnIconWrap, strong ? styles.actionBtnIconWrapStrong : undefined]}>
-          <Text style={[styles.actionBtnIcon, strong ? styles.actionBtnIconStrong : undefined]}>{reportActionIcon(title)}</Text>
+          <Ionicons name={reportActionIcon(title)} size={14} color={strong ? '#0a7a5b' : '#1458bf'} />
         </View>
         <Text style={[styles.actionBtnText, strong ? styles.actionBtnTextStrong : undefined]}>{title}</Text>
       </View>
@@ -587,28 +726,58 @@ function ActionButton({
 
 function reportActionIcon(title: string) {
   const lower = title.toLowerCase();
-  if (lower.includes('attendance')) {
-    return '◫';
+  if (lower.includes('attendance') && lower.includes('pdf')) {
+    return 'document-text-outline';
   }
-  if (lower.includes('salary')) {
-    return '₹';
+  if (lower.includes('salary') && lower.includes('pdf')) {
+    return 'wallet-outline';
   }
-  if (lower.includes('staff')) {
-    return '⊚';
+  if (lower.includes('complete')) {
+    return 'layers-outline';
   }
-  if (lower.includes('shift')) {
-    return '◷';
+  if (lower.includes('attendance') && lower.includes('excel')) {
+    return 'grid-outline';
   }
-  if (lower.includes('excel')) {
-    return '▤';
-  }
-  if (lower.includes('pdf')) {
-    return '◉';
+  if (lower.includes('salary') && lower.includes('excel')) {
+    return 'cash-outline';
   }
   if (lower.includes('advance')) {
-    return '↦';
+    return 'receipt-outline';
   }
-  return '◎';
+  if (lower.includes('staff')) {
+    return 'people-outline';
+  }
+  if (lower.includes('shift')) {
+    return 'calendar-outline';
+  }
+  return 'document-outline';
+}
+
+function SummaryCardCompact({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: 'green' | 'red' | 'amber' | 'slate' | 'blue';
+}) {
+  const palette = {
+    green: { bg: '#e8f9f1', fg: '#0f9f63', border: '#bde6d0' },
+    red: { bg: '#fdeeee', fg: '#c22a2a', border: '#f5caca' },
+    amber: { bg: '#fff4df', fg: '#ba7a1d', border: '#f1ddb4' },
+    slate: { bg: '#eef2f7', fg: '#334155', border: '#d8e1ea' },
+    blue: { bg: '#e6effd', fg: '#1458bf', border: '#c8dafe' },
+  } as const;
+
+  return (
+    <View style={[styles.summaryCompactCard, { backgroundColor: palette[tone].bg, borderColor: palette[tone].border }]}>
+      <Text style={styles.summaryCompactLabel}>{label}</Text>
+      <Text style={[styles.summaryCompactValue, { color: palette[tone].fg }]} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  );
 }
 
 function ReportTable({
@@ -704,7 +873,7 @@ function buildCompleteHtml(input: {
   attendance: any[];
   salaries: any[];
   advances: any[];
-  weeklyPlans: any[];
+  weeklyAssignments: any[];
   employeeById: Map<string, { name: string; designation: string; code: string }>;
   shiftById: Map<string, { name: string; startTime: string; endTime: string }>;
   attendanceSummary: { present: number; absent: number; late: number; half_day: number; leave: number };
@@ -723,13 +892,13 @@ function buildCompleteHtml(input: {
     )
     .join('');
 
-  const shiftRows = input.weeklyPlans
+  const shiftRows = input.weeklyAssignments
     .map(
       item =>
-        `<tr><td>${safe(item.dayOfWeek.toUpperCase())}</td><td>${safe(
-          input.employeeById.get(item.employeeId)?.code ?? '-',
-        )}</td><td>${safe(input.employeeById.get(item.employeeId)?.name ?? item.employeeId)}</td><td>${safe(
-          input.shiftById.get(item.shiftId)?.name ?? item.shiftId,
+        `<tr><td>${safe(plannerDayLabel(item.dayOfWeek))}</td><td>${safe(
+          input.employeeById.get(item.staffId)?.code ?? '-',
+        )}</td><td>${safe(input.employeeById.get(item.staffId)?.name ?? item.staffId)}</td><td>${safe(
+          item.isOff ? 'Off Day' : input.shiftById.get(item.shiftId ?? '')?.name ?? item.shiftId ?? 'Not assigned',
         )}</td></tr>`,
     )
     .join('');
@@ -750,8 +919,12 @@ function buildCompleteHtml(input: {
   ${stripHtml(attendanceRows)}
   ${stripHtml(salaryRows)}
   ${reportHtml('Advance Report', ['Date', 'Code', 'Staff', 'Type', 'Amount'], advanceRows)}
-  ${reportHtml('Weekly Shift Plan', ['Day', 'Code', 'Staff', 'Shift'], shiftRows)}
+  ${reportHtml('Weekly Shift Assignments', ['Day', 'Code', 'Staff', 'Assignment'], shiftRows)}
   </body></html>`;
+}
+
+function plannerDayLabel(dayOfWeek: number) {
+  return ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'][dayOfWeek] ?? '-';
 }
 
 function reportHtml(title: string, headers: string[], bodyRows: string) {
@@ -788,27 +961,202 @@ function stripHtml(html: string) {
 }
 
 const styles = StyleSheet.create({
+  page: {
+    flex: 1,
+    backgroundColor: '#f3f6fb',
+  },
   content: {
-    gap: 12,
+    gap: 14,
+    paddingHorizontal: 16,
     paddingBottom: 22,
   },
-  headerWrap: {
+  banner: {
+    backgroundColor: colors.success,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    paddingHorizontal: 16,
+    paddingBottom: 18,
+    marginHorizontal: -16,
+    gap: 14,
+    overflow: 'hidden',
+  },
+  headerGradientBase: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#0b8f6d',
+  },
+  headerGradientGlowTop: {
+    position: 'absolute',
+    top: -90,
+    right: -50,
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    backgroundColor: '#30b28b',
+    opacity: 0.26,
+  },
+  headerGradientGlowBottom: {
+    position: 'absolute',
+    bottom: -120,
+    left: -40,
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: '#06644d',
+    opacity: 0.3,
+  },
+  formStatusTexture: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.success,
+    overflow: 'hidden',
+    zIndex: 20,
+    elevation: 20,
+  },
+  formStatusTextureGlowTop: {
+    position: 'absolute',
+    top: -42,
+    right: -18,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    backgroundColor: '#30b28b',
+    opacity: 0.24,
+  },
+  formStatusTextureGlowBottom: {
+    position: 'absolute',
+    bottom: -54,
+    left: -24,
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    backgroundColor: '#05654d',
+    opacity: 0.22,
+  },
+  reportsHeaderTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  reportsHeaderBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+  },
+  reportsHeaderBadgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  reportsHeaderAction: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(9, 82, 64, 0.9)',
+  },
+  reportsHeaderTextBlock: {
     gap: 4,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: colors.textPrimary,
+  bannerTitle: {
+    color: '#ffffff',
+    fontSize: 32,
+    fontWeight: '900',
   },
-  subtitle: {
-    color: colors.textSecondary,
-    lineHeight: 19,
+  bannerSub: {
+    color: '#defbf1',
+    fontSize: 17,
+    fontWeight: '700',
+    lineHeight: 22,
+  },
+  bannerPowered: {
+    color: '#c8f3e8',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  reportsOverviewCard: {
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(6, 85, 64, 0.32)',
+    gap: 8,
+  },
+  reportsOverviewEyebrow: {
+    color: '#d6f8ed',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  reportsOverviewTitle: {
+    color: '#ffffff',
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  reportsOverviewText: {
+    color: '#e8fff7',
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '500',
+  },
+  reportsOverviewStats: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  reportsOverviewStatCard: {
+    width: '48%',
+    minHeight: 74,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    gap: 4,
+  },
+  reportsOverviewStatCardWide: {
+    width: '100%',
+  },
+  reportsOverviewStatLabel: {
+    color: '#d6f8ed',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  reportsOverviewStatValue: {
+    color: '#ffffff',
+    fontSize: 20,
+    fontWeight: '800',
   },
   sectionTitle: {
     color: colors.textPrimary,
     fontWeight: '800',
     fontSize: 16,
+  },
+  panelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 10,
+  },
+  panelTitleBlock: {
+    flex: 1,
+    gap: 4,
+  },
+  panelMeta: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 18,
   },
   inputRow: {
     flexDirection: 'row',
@@ -843,6 +1191,30 @@ const styles = StyleSheet.create({
     color: '#c22a2a',
     fontWeight: '700',
     fontSize: 12,
+  },
+  summaryRowSingle: {
+    gap: 8,
+    paddingRight: 4,
+  },
+  summaryCompactCard: {
+    minWidth: 118,
+    minHeight: 66,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    gap: 4,
+  },
+  summaryCompactLabel: {
+    color: colors.textMuted,
+    fontWeight: '700',
+    fontSize: 11,
+    textTransform: 'uppercase',
+  },
+  summaryCompactValue: {
+    fontWeight: '800',
+    fontSize: 20,
   },
   tableOuter: {
     paddingTop: 4,
@@ -899,6 +1271,14 @@ const styles = StyleSheet.create({
   actionsWrap: {
     gap: 8,
   },
+  exportSection: {
+    gap: 8,
+  },
+  exportGroupTitle: {
+    color: colors.textPrimary,
+    fontWeight: '800',
+    fontSize: 13,
+  },
   actionBtn: {
     minHeight: 44,
     borderRadius: 10,
@@ -916,9 +1296,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   actionBtnIconWrap: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -931,8 +1311,7 @@ const styles = StyleSheet.create({
   },
   actionBtnIcon: {
     color: '#1458bf',
-    fontSize: 11,
-    fontWeight: '800',
+    fontSize: 14,
   },
   actionBtnIconStrong: {
     color: '#0a7a5b',
@@ -969,7 +1348,7 @@ const styles = StyleSheet.create({
   },
   fileRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 8,
     borderWidth: 1,
     borderColor: '#e6ebf2',

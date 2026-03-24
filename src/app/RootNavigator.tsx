@@ -1,14 +1,14 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Dimensions, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createDrawerNavigator } from '@react-navigation/drawer';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppSelector } from '../store/hooks';
 import type { AuthStackParamList, ShopDrawerParamList } from '../types/navigation';
 import { LoginScreen } from '../features/auth/LoginScreen';
 import { AdminHomeTabs } from '../features/admin/AdminHomeTabs';
 import { ShopHomeTabs } from '../features/shop/ShopHomeTabs';
+import { StaffHomeTabs } from '../features/staff/StaffHomeTabs';
 import { ProfileScreen } from '../features/shop/ProfileScreen';
 import { ShopSettingsScreen } from '../features/shop/ShopSettingsScreen';
 import { ShopSupportScreen } from '../features/shop/ShopSupportScreen';
@@ -18,6 +18,7 @@ import { colors } from '../theme/colors';
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
 const AdminStack = createNativeStackNavigator<{ AdminRoot: undefined }>();
 const ShopDrawer = createDrawerNavigator<ShopDrawerParamList>();
+const SHOP_DRAWER_WIDTH = Math.min(360, Math.round(Dimensions.get('window').width * 0.88));
 
 function AuthNavigator() {
   return (
@@ -49,6 +50,17 @@ function ShopManagerNavigator() {
         headerStyle: { backgroundColor: colors.success },
         headerTintColor: '#fff',
         drawerType: 'slide',
+        overlayColor: 'rgba(7, 18, 34, 0.34)',
+        drawerStyle: {
+          width: SHOP_DRAWER_WIDTH,
+          backgroundColor: 'transparent',
+          borderRightWidth: 0,
+          elevation: 0,
+          shadowOpacity: 0,
+        },
+        sceneStyle: {
+          backgroundColor: colors.bg,
+        },
         headerTitleStyle: { fontWeight: '800' },
         headerLeft: () => null,
         headerRight: () => (
@@ -62,7 +74,7 @@ function ShopManagerNavigator() {
               pressed && styles.menuButtonPressed,
               pressed && styles.shopMenuButtonPressed,
             ]}>
-            <Text style={styles.menuText}>☰</Text>
+            <Text style={styles.menuText}>Menu</Text>
           </Pressable>
         ),
       })}>
@@ -112,15 +124,16 @@ export function RootNavigator() {
   }
 
   return (
-    <SafeAreaView style={styles.safeRoot} edges={['top']}>
-      <StatusBar translucent={false} />
+    <View style={styles.safeRoot}>
+      <StatusBar translucent backgroundColor="transparent" />
       <NavigationContainer>
         {!user && <AuthNavigator />}
         {user?.role === 'super_admin' && <SuperAdminNavigator />}
         {user?.role === 'shop_manager' && (user.shopId ? <ShopManagerNavigator /> : <ShopAccessMissingScreen />)}
-        {user && user.role !== 'super_admin' && user.role !== 'shop_manager' && <RoleFallbackScreen />}
+        {user?.role === 'staff' && (user.shopId && user.employeeId ? <StaffHomeTabs /> : <ShopAccessMissingScreen />)}
+        {user && user.role !== 'super_admin' && user.role !== 'shop_manager' && user.role !== 'staff' && <RoleFallbackScreen />}
       </NavigationContainer>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -137,9 +150,12 @@ const styles = StyleSheet.create({
   menuButton: {
     marginRight: 12,
     backgroundColor: '#2f6ec6',
-    paddingHorizontal: 12,
+    minHeight: 38,
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 8,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   menuButtonPressed: {
     backgroundColor: '#2759a0',
@@ -153,6 +169,7 @@ const styles = StyleSheet.create({
   menuText: {
     color: '#fff',
     fontWeight: '700',
+    fontSize: 13,
   },
   fallbackWrap: {
     flex: 1,

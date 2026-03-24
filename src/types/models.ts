@@ -1,7 +1,8 @@
-export type UserRole = 'super_admin' | 'shop_manager';
+export type UserRole = 'super_admin' | 'shop_manager' | 'staff';
 
 export type ShopStatus = 'active' | 'inactive';
 export type EmployeeStatus = 'active' | 'inactive';
+export type EmployeeAuthStatus = 'not_created' | 'pending' | 'provisioned' | 'disabled' | 'error';
 export type AttendanceStatus = 'present' | 'absent' | 'late' | 'half_day' | 'leave';
 export type AttendanceSource = 'manual' | 'biometric';
 export type WeeklyOffDay = 'none' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
@@ -11,6 +12,7 @@ export interface AuthUser {
   email: string;
   role: UserRole;
   shopId?: string;
+  employeeId?: string;
   displayName?: string;
 }
 
@@ -43,6 +45,7 @@ export interface Employee {
   employeeCode?: string;
   name: string;
   phone: string;
+  loginEmail?: string;
   address: string;
   addressLine1?: string;
   taluka?: string;
@@ -60,6 +63,12 @@ export interface Employee {
   biometricUserId?: string;
   biometricConsent?: boolean;
   biometricRegisteredAt?: string;
+  authUid?: string;
+  authStatus?: EmployeeAuthStatus;
+  authProvisionedAt?: string;
+  authDisabledAt?: string;
+  lastLoginAt?: string;
+  authLastError?: string;
   activatedAt?: string;
   deactivatedAt?: string;
   status: EmployeeStatus;
@@ -72,7 +81,10 @@ export interface AttendanceRecord {
   employeeId: string;
   shopId: string;
   date: string;
+  shiftId?: string;
   status: AttendanceStatus;
+  lateFlag?: boolean;
+  workingHours?: number;
   source?: AttendanceSource;
   punchTime?: string;
   rawLogId?: string;
@@ -80,6 +92,8 @@ export interface AttendanceRecord {
   syncedAt?: string;
   checkInTime?: string;
   checkOutTime?: string;
+  checkInAt?: string;
+  checkOutAt?: string;
   notes?: string;
   createdBy: string;
   createdAt: string;
@@ -132,17 +146,36 @@ export interface ShiftMaster {
   endTime: string;
   durationHours: number;
   active: boolean;
+  allowedEarlyMinutes?: number;
+  graceTime?: number;
+  lateRuleMinutes?: number;
+  halfDayHours?: number;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface WeeklyShiftPlan {
+export interface ShiftTemplate {
   id: string;
   shopId: string;
-  weekStartDate: string;
-  employeeId: string;
-  shiftId: string;
-  dayOfWeek: 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
+  name: string;
+  startTime: string;
+  endTime: string;
+  durationHours: number;
+  allowedEarlyMinutes?: number;
+  graceTime: number;
+  lateRuleMinutes: number;
+  halfDayHours: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StaffWeeklyShiftDay {
+  id: string;
+  shopId: string;
+  staffId: string;
+  dayOfWeek: number;
+  shiftId: string | null;
+  isOff: boolean;
   createdAt: string;
   updatedAt: string;
 }

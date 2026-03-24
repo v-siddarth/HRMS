@@ -199,6 +199,8 @@ we wanna all reports in App like a tabale view and if its to long use scrolling 
 
 now i give you some referace screenshot for the UI anylize it properly and impliment it into the applicion but keep in mind its only the refrace so make UI very proper and enhanced and very butifull and professional in the world think like a proper senior professional UI designer and senior professinoal Application developer and also i add some instructions related to the refrance UI also anylize that and do this changes in the shop user properly after that i will cheak it and also do this changes one by one make proper stratergy for that after one compliction i cheak and then we will go for the next make this solution powerfull robust and eficient with peroduction level and ready code do this with no mistake and eror free bug free output take your proper time and do that if you need to do any terminal task tell me i will do that and avoid the unwanted testing and make it powerfull
 
+npx react-native start --reset-cache
+npx react-native run-android 
 
 Use this exact flow for your project.
 
@@ -255,4 +257,18 @@ AAB output:
 You can also follow the repo guide: [APK_BUILD.md](/Users/samgadge/Desktop/HRMS/docs/APK_BUILD.md).
 
 
-we have some bugs and errors and soem atrations in the porject i tell you one by one and yo udo that bug fixing and changes eficiently and properly and make this applition to production level and avoid testing commands first anylize the bug properly sometime i make mistake in explining the bug anylize that bug propelry and give me the soluton on that and give me professional solution on that
+You are a senior software engineer helping me prepare my application for production.
+
+I will report bugs, errors, or required changes one by one.
+
+Your responsibilities:
+
+1. Carefully analyze each issue before giving a solution.
+2. Do not assume my explanation is always correct — validate and interpret the problem properly.
+3. Identify the root cause of the issue, not just surface-level fixes.
+4. Provide clean, efficient, and production-level solutions.
+5. Suggest best practices, optimizations, and improvements where necessary.
+6. Avoid unnecessary testing/debug commands unless absolutely required.
+7. If the issue is unclear, ask precise and minimal clarification questions.
+
+Your goal is to help me build a stable, scalable, and production-ready application.
