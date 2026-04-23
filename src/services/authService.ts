@@ -168,11 +168,13 @@ export const createShopAuthUser = async (email: string, password: string): Promi
     throw new Error('Initial login password must be at least 6 characters.');
   }
 
-  let createdUid = '';
-  let restoreError: unknown = null;
+  const appName = `shop-create-${Date.now()}`;
+  const secondaryApp = await app.initializeApp(buildSecondaryFirebaseOptions(), appName);
+
   try {
-    const credential = await auth().createUserWithEmailAndPassword(normalizedEmail, password.trim());
-    createdUid = credential.user.uid;
+    const secondaryAuth = secondaryApp.auth();
+    const credential = await secondaryAuth.createUserWithEmailAndPassword(normalizedEmail, password.trim());
+    return { uid: credential.user.uid };
   } catch (error) {
     const message = String((error as { message?: string }).message ?? '').toLowerCase();
     if (message.includes('auth/email-already-in-use')) {
@@ -186,22 +188,17 @@ export const createShopAuthUser = async (email: string, password: string): Promi
     }
     throw error;
   } finally {
-    const currentEmail = normalize(auth().currentUser?.email ?? '');
-    if (currentEmail !== normalize(HARDCODED_ADMIN.email)) {
-      try {
-        await setLocalAdminSession();
-      } catch (error) {
-        restoreError = error;
-      }
+    try {
+      await secondaryApp.auth().signOut();
+    } catch {
+      // Ignore cleanup errors from the temporary auth instance.
+    }
+    try {
+      await secondaryApp.delete();
+    } catch {
+      // Ignore app cleanup issues; the creation result already completed.
     }
   }
-
-  if (restoreError) {
-    logError('ADMIN_SESSION_RESTORE_FAILED_AFTER_SHOP_USER_CREATE', restoreError, { email: normalizedEmail });
-    throw new Error('Shop auth user created, but admin session restore failed. Please login again.');
-  }
-
-  return { uid: createdUid };
 };
 
 export const createStaffAuthUserLocally = async ({

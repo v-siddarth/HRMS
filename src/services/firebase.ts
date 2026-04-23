@@ -15,5 +15,9 @@ export const attendanceCol = (shopId: string) => shopDoc(shopId).collection('att
 export const salaryCol = (shopId: string) => shopDoc(shopId).collection('salary');
 export const advancesCol = (shopId: string) => shopDoc(shopId).collection('advances');
 export const shiftsCol = (shopId: string) => shopDoc(shopId).collection('shifts');
+export const holidaysCol = (shopId: string) => shopDoc(shopId).collection('holidays');
+export const leavesCol = (shopId: string) => shopDoc(shopId).collection('leaves');
+export const shiftHistoryCol = (shopId: string) => shopDoc(shopId).collection('shift_history');
 export const payrollSettingsDoc = (shopId: string) => shopDoc(shopId).collection('settings').doc('payroll');
 export const biometricSettingsDoc = (shopId: string) => shopDoc(shopId).collection('settings').doc('biometric');
+export const geoFencingSettingsDoc = (shopId: string) => shopDoc(shopId).collection('settings').doc('geo_fencing');

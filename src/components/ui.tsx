@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { colors } from '../theme/colors';
+import { wp, hp, sp } from '../utils/responsive';
 
 export const Screen = ({ children }: { children: React.ReactNode }) => (
   <View style={styles.screen}>{children}</View>
@@ -47,7 +48,7 @@ export const Field = ({ label, secureTextEntry, ...props }: { label: string } & 
             style={({ pressed }) => [styles.inputAccessory, pressed && styles.inputAccessoryPressed]}>
             <Ionicons
               name={passwordVisible ? 'eye-off-outline' : 'eye-outline'}
-              size={20}
+              size={sp(20)}
               color={colors.textMuted}
             />
           </Pressable>
@@ -95,35 +96,35 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.bg,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 24,
-    gap: 12,
+    paddingHorizontal: wp(16),
+    paddingTop: hp(12),
+    paddingBottom: hp(24),
+    gap: hp(12),
   },
   fieldWrap: {
-    gap: 6,
+    gap: hp(6),
   },
   inputWrap: {
     position: 'relative',
     justifyContent: 'center',
   },
   label: {
-    fontSize: 13,
+    fontSize: sp(13),
     fontWeight: '600',
     color: colors.textPrimary,
   },
   input: {
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    borderRadius: wp(14),
+    paddingHorizontal: wp(12),
+    paddingVertical: hp(12),
     backgroundColor: colors.surface,
     color: colors.textPrimary,
-    fontSize: 15,
+    fontSize: sp(15),
   },
   inputWithAccessory: {
-    paddingRight: 44,
+    paddingRight: wp(44),
   },
   inputDisabled: {
     backgroundColor: colors.surfaceMuted,
@@ -131,8 +132,8 @@ const styles = StyleSheet.create({
   },
   inputAccessory: {
     position: 'absolute',
-    right: 12,
-    height: 40,
+    right: wp(12),
+    height: hp(40),
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -141,15 +142,15 @@ const styles = StyleSheet.create({
   },
   button: {
     backgroundColor: colors.primary,
-    borderRadius: 14,
+    borderRadius: wp(14),
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 50,
-    paddingHorizontal: 16,
+    minHeight: hp(50),
+    paddingHorizontal: wp(16),
     shadowColor: colors.shadow,
     shadowOpacity: 0.14,
-    shadowOffset: { width: 0, height: 6 },
-    shadowRadius: 10,
+    shadowOffset: { width: 0, height: hp(6) },
+    shadowRadius: wp(10),
     elevation: 2,
   },
   buttonPressed: {
@@ -163,19 +164,19 @@ const styles = StyleSheet.create({
   buttonText: {
     color: '#fff',
     fontWeight: '800',
-    fontSize: 15,
+    fontSize: sp(15),
   },
   card: {
     backgroundColor: colors.surface,
-    borderRadius: 16,
-    padding: 14,
+    borderRadius: wp(16),
+    padding: wp(14),
     borderColor: '#d8e2ed',
     borderWidth: 1,
-    gap: 10,
+    gap: hp(10),
     shadowColor: colors.shadow,
     shadowOpacity: 0.05,
-    shadowOffset: { width: 0, height: 5 },
-    shadowRadius: 10,
+    shadowOffset: { width: 0, height: hp(5) },
+    shadowRadius: wp(10),
     elevation: 1,
   },
   row: {
@@ -186,9 +187,11 @@ const styles = StyleSheet.create({
   rowLabel: {
     color: colors.textSecondary,
     fontWeight: '500',
+    fontSize: sp(14),
   },
   rowValue: {
     color: colors.textPrimary,
     fontWeight: '700',
+    fontSize: sp(14),
   },
 });

@@ -9,8 +9,13 @@ import type {
   BiometricSettings,
   EmployeeAdvance,
   Employee,
+  GeoFencingSettings,
+  HolidayCalendarEntry,
+  LeaveRequest,
   PayrollSettings,
   SalaryMonthly,
+  ShiftAssignmentMode,
+  ShiftHistoryEntry,
   ShiftMaster,
   ShiftTemplate,
   StaffWeeklyShiftDay,
@@ -23,16 +28,30 @@ import {
   biometricSettingsDoc,
   employeesCol,
   firestore,
+  geoFencingSettingsDoc,
+  holidaysCol,
+  leavesCol,
   nowIso,
   payrollSettingsDoc,
   salaryCol,
   shopDoc,
   shopsCol,
+  shiftHistoryCol,
   shiftsCol,
 } from '../services/firebase';
+import { calculateAttendanceAnalytics, type AttendanceAnalyticsOutput } from '../utils/attendanceAnalytics';
 import { calculateSalary } from '../utils/salary';
 import { currentMonth, daysInMonth, monthDateRange, todayDate } from '../utils/date';
+import { buildShopLocationConfig, validateGeoFenceForAttendance, validateShopLocationConfig } from '../utils/geofencing';
+import { findApprovedLeaveForDate, findHolidayForDate } from '../utils/leaveManagement';
 import { logError, logInfo } from '../utils/logger';
+import {
+  buildShiftHistoryEntry,
+  compareShiftDecisions,
+  isWeeklyOffDate,
+  resolveShiftDecisionForDate,
+  weekdayIndexFromDate,
+} from '../utils/shiftEngine';
 import {
   createShopAuthUser,
   deleteOwnStaffAccountViaEndpoint,
@@ -49,6 +68,13 @@ interface FirestoreError {
 
 const FUNCTIONS_REGION = 'us-central1';
 const DEFAULT_ALLOWED_EARLY_MINUTES = 30;
+const DEFAULT_GEO_FENCING_SETTINGS: GeoFencingSettings = {
+  enabled: false,
+  location: null,
+  accuracyBufferMeters: 20,
+  allowAttendanceWhenLocationMissing: true,
+  requireGpsAccuracyMeters: 100,
+};
 const SHOP_CHILD_COLLECTIONS = [
   'managers',
   'employees',
@@ -145,10 +171,33 @@ interface SaveStaffWeeklyShiftPlanInput {
   days: StaffWeeklyShiftDayInput[];
 }
 
+interface RotationPatternInput {
+  weekIndex: number;
+  shiftId: string | null;
+  isOff?: boolean;
+}
+
+interface SaveAdvancedShiftPlanInput extends SaveStaffWeeklyShiftPlanInput {
+  mode: ShiftAssignmentMode;
+  fixedShiftId?: string | null;
+  rotationStartDate?: string;
+  rotationPattern?: RotationPatternInput[];
+}
+
+interface BulkAssignShiftPlanInput {
+  shopId: string;
+  staffIds: string[];
+  plan: Omit<SaveAdvancedShiftPlanInput, 'shopId' | 'staffId'>;
+}
+
 interface ReportFilter {
   shopId: string;
   fromDate: string;
   toDate: string;
+}
+
+interface AttendanceAnalyticsFilter extends ReportFilter {
+  staffId?: string;
 }
 
 interface ShopDashboard {
@@ -254,6 +303,73 @@ interface RegisterEmployeeWithAuthInput {
 
 const serialize = <T extends { id: string }>(id: string, data: Omit<T, 'id'>): T =>
   ({ id, ...data }) as T;
+
+async function findAttendanceRecord(shopId: string, employeeId: string, date: string): Promise<AttendanceRecord | null> {
+  const snapshot = await withFirestoreRetry(async () =>
+    attendanceCol(shopId)
+      .where('employeeId', '==', employeeId)
+      .where('date', '==', date)
+      .limit(1)
+      .get(),
+  );
+
+  const doc = snapshot.docs[0];
+  return doc ? serialize<AttendanceRecord>(doc.id, doc.data() as Omit<AttendanceRecord, 'id'>) : null;
+}
+
+async function findSalaryRecord(shopId: string, employeeId: string, month: string): Promise<SalaryMonthly | null> {
+  const snapshot = await withFirestoreRetry(async () =>
+    salaryCol(shopId)
+      .where('employeeId', '==', employeeId)
+      .where('month', '==', month)
+      .limit(1)
+      .get(),
+  );
+
+  const doc = snapshot.docs[0];
+  return doc ? serialize<SalaryMonthly>(doc.id, doc.data() as Omit<SalaryMonthly, 'id'>) : null;
+}
+
+const normalizeGeoFencingSettings = (shopId: string, rawValue: unknown): GeoFencingSettings => {
+  const raw = (rawValue ?? {}) as Record<string, unknown>;
+  const rawLocation = (raw.location ?? raw.shopLocation ?? null) as Record<string, unknown> | null;
+  const locationValidation = rawLocation
+    ? validateShopLocationConfig({
+        shopId,
+        latitude: Number(rawLocation.latitude),
+        longitude: Number(rawLocation.longitude),
+        radius: Number(rawLocation.radius),
+      })
+    : null;
+  const location = rawLocation && locationValidation?.ok
+    ? buildShopLocationConfig({
+        shopId,
+        latitude: Number(rawLocation.latitude),
+        longitude: Number(rawLocation.longitude),
+        radius: Number(rawLocation.radius),
+        updatedAt: String(rawLocation.updatedAt ?? rawLocation.updated_at ?? nowIso()),
+      })
+    : null;
+
+  return {
+    enabled: Boolean(raw.enabled ?? DEFAULT_GEO_FENCING_SETTINGS.enabled),
+    location,
+    accuracyBufferMeters: Math.max(
+      0,
+      Number(raw.accuracyBufferMeters ?? raw.accuracy_buffer_meters ?? DEFAULT_GEO_FENCING_SETTINGS.accuracyBufferMeters),
+    ),
+    allowAttendanceWhenLocationMissing: Boolean(
+      raw.allowAttendanceWhenLocationMissing
+      ?? raw.allow_attendance_when_location_missing
+      ?? DEFAULT_GEO_FENCING_SETTINGS.allowAttendanceWhenLocationMissing,
+    ),
+    requireGpsAccuracyMeters: Number(
+      raw.requireGpsAccuracyMeters
+      ?? raw.require_gps_accuracy_meters
+      ?? DEFAULT_GEO_FENCING_SETTINGS.requireGpsAccuracyMeters,
+    ),
+  };
+};
 
 const hasSnapshotDocs = (
   snapshot: FirebaseFirestoreTypes.QuerySnapshot<FirebaseFirestoreTypes.DocumentData> | null | undefined,
@@ -617,6 +733,10 @@ const isFunctionsEndpointUnavailable = (error: unknown) => {
 };
 
 const normalizeShiftNameClient = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
+const normalizeNullableShiftId = (value: string | null | undefined) => {
+  const normalized = String(value ?? '').trim();
+  return normalized ? normalized : null;
+};
 
 const shiftTemplateToFirestoreShape = (input: ShiftTemplate) => ({
   id: input.id,
@@ -638,7 +758,7 @@ const weeklyShiftDayToFirestoreShape = (input: StaffWeeklyShiftDay) => ({
   shop_id: input.shopId,
   staff_id: input.staffId,
   day_of_week: input.dayOfWeek,
-  shift_id: input.shiftId,
+  shift_id: normalizeNullableShiftId(input.shiftId),
   is_off: input.isOff,
   created_at: input.createdAt,
   updated_at: input.updatedAt,
@@ -665,6 +785,73 @@ const parseStaffWeeklyShiftDays = (rawValue: unknown, shopId: string, staffId: s
     })
     .filter(item => Number.isInteger(item.dayOfWeek) && item.dayOfWeek >= 0 && item.dayOfWeek <= 6)
     .sort((a, b) => a.dayOfWeek - b.dayOfWeek);
+};
+
+const normalizeEmployeeSchedulingFields = (employee: Employee, raw?: Record<string, unknown>): Employee => {
+  const source = raw ?? (employee as unknown as Record<string, unknown>);
+  const shiftModeRaw = String(source.shift_mode ?? source.shiftMode ?? employee.shiftMode ?? '').toLowerCase();
+  const shiftMode: ShiftAssignmentMode = shiftModeRaw === 'fixed' || shiftModeRaw === 'rotational' ? shiftModeRaw : 'dynamic';
+  const rotationPatternRaw = source.rotation_pattern ?? source.rotationPattern;
+  const shiftOverridesRaw = source.shift_overrides ?? source.shiftOverrides;
+  const weeklyOffConfigRaw = (source.weekly_off_config ?? source.weeklyOffConfig ?? null) as Record<string, unknown> | null;
+
+  return {
+    ...employee,
+    shiftMode,
+    rotationStartDate: String(source.rotation_start_date ?? source.rotationStartDate ?? employee.rotationStartDate ?? ''),
+    rotationPattern: Array.isArray(rotationPatternRaw)
+      ? rotationPatternRaw
+          .map((item, index) => {
+            const rawItem = (item ?? {}) as Record<string, unknown>;
+            return {
+              weekIndex: Number(rawItem.week_index ?? rawItem.weekIndex ?? index),
+              shiftId: rawItem.shift_id ? String(rawItem.shift_id) : rawItem.shiftId ? String(rawItem.shiftId) : null,
+              isOff: Boolean(rawItem.is_off ?? rawItem.isOff),
+            };
+          })
+          .filter(item => Number.isInteger(item.weekIndex) && item.weekIndex >= 0)
+      : employee.rotationPattern ?? [],
+    shiftOverrides: Array.isArray(shiftOverridesRaw)
+      ? shiftOverridesRaw.map(item => {
+          const rawItem = (item ?? {}) as Record<string, unknown>;
+          return {
+            date: String(rawItem.date ?? ''),
+            shiftId: rawItem.shift_id ? String(rawItem.shift_id) : rawItem.shiftId ? String(rawItem.shiftId) : null,
+            isOff: Boolean(rawItem.is_off ?? rawItem.isOff),
+            note: String(rawItem.note ?? rawItem.notes ?? ''),
+            createdAt: String(rawItem.created_at ?? rawItem.createdAt ?? ''),
+            updatedAt: String(rawItem.updated_at ?? rawItem.updatedAt ?? ''),
+          };
+        })
+      : employee.shiftOverrides ?? [],
+    weeklyOffConfig: weeklyOffConfigRaw
+      ? {
+          daysOfWeek: Array.isArray(weeklyOffConfigRaw.days_of_week ?? weeklyOffConfigRaw.daysOfWeek)
+            ? ((weeklyOffConfigRaw.days_of_week ?? weeklyOffConfigRaw.daysOfWeek) as unknown[])
+                .map(item => String(item).toLowerCase())
+                .filter(item => item !== 'none') as Array<Exclude<WeeklyOffDay, 'none'>>
+            : employee.weeklyOff && employee.weeklyOff !== 'none'
+              ? [employee.weeklyOff]
+              : [],
+          monthlyRules: Array.isArray(weeklyOffConfigRaw.monthly_rules ?? weeklyOffConfigRaw.monthlyRules)
+            ? ((weeklyOffConfigRaw.monthly_rules ?? weeklyOffConfigRaw.monthlyRules) as unknown[])
+                .map(item => {
+                  const rawItem = (item ?? {}) as Record<string, unknown>;
+                  return {
+                    weekOrdinal: Number(rawItem.week_ordinal ?? rawItem.weekOrdinal ?? 0) as 1 | 2 | 3 | 4 | 5 | -1,
+                    dayOfWeek: String(rawItem.day_of_week ?? rawItem.dayOfWeek ?? 'mon').toLowerCase() as Exclude<WeeklyOffDay, 'none'>,
+                  };
+                })
+                .filter(item => Number.isInteger(item.weekOrdinal))
+            : employee.weeklyOffConfig?.monthlyRules ?? [],
+          allowAttendanceOnOffDay: Boolean(
+            weeklyOffConfigRaw.allow_attendance_on_off_day
+            ?? weeklyOffConfigRaw.allowAttendanceOnOffDay
+            ?? employee.weeklyOffConfig?.allowAttendanceOnOffDay,
+          ),
+        }
+      : employee.weeklyOffConfig,
+  };
 };
 
 const mapShiftTemplate = (item: {
@@ -731,8 +918,6 @@ const mapStaffWeeklyShiftDay = (item: {
   updatedAt: item.updated_at,
 });
 
-const weekdayIndexFromDate = (date: string) => (dayjs(date).day() + 6) % 7;
-
 const buildShiftWindow = (assignmentDate: string, shift: ShiftTemplate) => {
   const start = dayjs(`${assignmentDate}T${shift.startTime}`);
   let end = dayjs(`${assignmentDate}T${shift.endTime}`);
@@ -747,7 +932,16 @@ const buildShiftWindow = (assignmentDate: string, shift: ShiftTemplate) => {
 
 const formatAttendanceClock = (value: dayjs.Dayjs) => value.format('HH:mm');
 type AssignedShiftContext =
-  | { ok: true; date: string; shift: ShiftTemplate; assignment: StaffWeeklyShiftDay }
+  | {
+      ok: true;
+      date: string;
+      shift: ShiftTemplate;
+      assignment: StaffWeeklyShiftDay;
+      mode: ShiftAssignmentMode;
+      isOff: boolean;
+      leave: LeaveRequest | null;
+      holiday: HolidayCalendarEntry | null;
+    }
   | { ok: false; message: string };
 
 async function listStaffWeeklyShiftDays(shopId: string, employeeId: string): Promise<StaffWeeklyShiftDay[]> {
@@ -757,6 +951,27 @@ async function listStaffWeeklyShiftDays(shopId: string, employeeId: string): Pro
   }
   const raw = (snapshot.data() ?? {}) as Record<string, unknown>;
   return parseStaffWeeklyShiftDays(raw.weekly_shift_assignments ?? raw.weeklyShiftAssignments, shopId, employeeId);
+}
+
+async function getEmployeeById(shopId: string, employeeId: string): Promise<Employee | null> {
+  const snapshot = await withFirestoreRetry(async () => employeesCol(shopId).doc(employeeId).get());
+  if (!hasSnapshotExistsMethod(snapshot) || !snapshot.exists()) {
+    return null;
+  }
+  const raw = (snapshot.data() ?? {}) as Record<string, unknown>;
+  return normalizeEmployeeSchedulingFields(serialize<Employee>(snapshot.id, raw as Omit<Employee, 'id'>), raw);
+}
+
+async function listApprovedLeavesForStaff(shopId: string, employeeId: string): Promise<LeaveRequest[]> {
+  const snapshot = await withFirestoreRetry(async () =>
+    leavesCol(shopId).where('staffId', '==', employeeId).where('status', '==', 'approved').get(),
+  );
+  return snapshot.docs.map(doc => serialize<LeaveRequest>(doc.id, doc.data() as Omit<LeaveRequest, 'id'>));
+}
+
+async function listHolidayEntries(shopId: string): Promise<HolidayCalendarEntry[]> {
+  const snapshot = await withFirestoreRetry(async () => holidaysCol(shopId).get());
+  return snapshot.docs.map(doc => serialize<HolidayCalendarEntry>(doc.id, doc.data() as Omit<HolidayCalendarEntry, 'id'>));
 }
 
 async function getShiftTemplateById(shopId: string, shiftId: string): Promise<ShiftTemplate | null> {
@@ -781,40 +996,91 @@ async function getShiftTemplateById(shopId: string, shiftId: string): Promise<Sh
 }
 
 async function resolveAssignedShiftContext(shopId: string, employeeId: string, now = dayjs()): Promise<AssignedShiftContext> {
-  const weeklyDays = await listStaffWeeklyShiftDays(shopId, employeeId);
-  if (!weeklyDays.length) {
+  const [employee, weeklyDays, approvedLeaves, holidays] = await Promise.all([
+    getEmployeeById(shopId, employeeId),
+    listStaffWeeklyShiftDays(shopId, employeeId),
+    listApprovedLeavesForStaff(shopId, employeeId),
+    listHolidayEntries(shopId),
+  ]);
+
+  if (!employee) {
+    return { ok: false, message: 'Staff profile not found.' };
+  }
+  if (!weeklyDays.length && !employee.defaultShiftId && !(employee.rotationPattern?.length)) {
     return { ok: false, message: 'Shift not assigned' };
   }
 
   const todayDateValue = now.format('YYYY-MM-DD');
   const yesterdayDateValue = now.subtract(1, 'day').format('YYYY-MM-DD');
-  const todayAssignment = weeklyDays.find(item => item.dayOfWeek === weekdayIndexFromDate(todayDateValue));
-  const yesterdayAssignment = weeklyDays.find(item => item.dayOfWeek === weekdayIndexFromDate(yesterdayDateValue));
+  const todayDecision = resolveShiftDecisionForDate({ date: todayDateValue, employee, weeklyAssignments: weeklyDays });
+  const yesterdayDecision = resolveShiftDecisionForDate({ date: yesterdayDateValue, employee, weeklyAssignments: weeklyDays });
+  const todayLeave = findApprovedLeaveForDate(employeeId, todayDateValue, approvedLeaves);
+  const todayHoliday = findHolidayForDate(todayDateValue, holidays);
 
-  if (yesterdayAssignment && !yesterdayAssignment.isOff && yesterdayAssignment.shiftId) {
-    const yesterdayShift = await getShiftTemplateById(shopId, yesterdayAssignment.shiftId);
+  if (todayHoliday) {
+    return { ok: false, message: 'Today is Holiday' };
+  }
+  if (todayLeave) {
+    return { ok: false, message: 'Approved leave exists for today.' };
+  }
+  if (todayDecision.isOff && !(employee.weeklyOffConfig?.allowAttendanceOnOffDay)) {
+    return { ok: false, message: 'Today is Off Day' };
+  }
+
+  if (!yesterdayDecision.isOff && yesterdayDecision.shiftId) {
+    const yesterdayShift = await getShiftTemplateById(shopId, yesterdayDecision.shiftId);
     const yesterdayWindow = yesterdayShift ? buildShiftWindow(yesterdayDateValue, yesterdayShift) : null;
     if (yesterdayShift && yesterdayWindow && now.isBefore(yesterdayWindow.end)) {
-      return { ok: true, date: yesterdayDateValue, shift: yesterdayShift, assignment: yesterdayAssignment };
+      return {
+        ok: true,
+        date: yesterdayDateValue,
+        shift: yesterdayShift,
+        assignment: {
+          id: `${employeeId}_${weekdayIndexFromDate(yesterdayDateValue)}`,
+          shopId,
+          staffId: employeeId,
+          dayOfWeek: weekdayIndexFromDate(yesterdayDateValue),
+          shiftId: yesterdayDecision.shiftId,
+          isOff: false,
+          createdAt: '',
+          updatedAt: '',
+        },
+        mode: yesterdayDecision.mode,
+        isOff: false,
+        leave: null,
+        holiday: null,
+      };
     }
   }
 
-  if (!todayAssignment) {
-    return { ok: false, message: 'Shift not assigned' };
-  }
-  if (todayAssignment.isOff) {
-    return { ok: false, message: 'Today is Off Day' };
-  }
-  if (!todayAssignment.shiftId) {
+  if (!todayDecision.shiftId) {
     return { ok: false, message: 'Shift not assigned' };
   }
 
-  const todayShift = await getShiftTemplateById(shopId, todayAssignment.shiftId);
+  const todayShift = await getShiftTemplateById(shopId, todayDecision.shiftId);
   if (!todayShift) {
     return { ok: false, message: 'Assigned shift no longer exists.' };
   }
 
-  return { ok: true, date: todayDateValue, shift: todayShift, assignment: todayAssignment };
+  return {
+    ok: true,
+    date: todayDateValue,
+    shift: todayShift,
+    assignment: {
+      id: `${employeeId}_${weekdayIndexFromDate(todayDateValue)}`,
+      shopId,
+      staffId: employeeId,
+      dayOfWeek: weekdayIndexFromDate(todayDateValue),
+      shiftId: todayDecision.shiftId,
+      isOff: todayDecision.isOff,
+      createdAt: '',
+      updatedAt: '',
+    },
+    mode: todayDecision.mode,
+    isOff: todayDecision.isOff,
+    leave: todayLeave,
+    holiday: todayHoliday,
+  };
 }
 
 function getInitialAttendanceStatus(now: dayjs.Dayjs, assignmentDate: string, shift: ShiftTemplate) {
@@ -855,14 +1121,67 @@ function calculateFinalAttendanceStatus(input: { workingHours: number; shift: Sh
   return 'absent';
 }
 
+function calculateShiftlessAttendanceStatus(record: AttendanceRecord, workingHours: number): AttendanceStatus {
+  if (record.status === 'holiday' || record.status === 'leave' || record.status === 'week_off') {
+    return record.status;
+  }
+  if (workingHours <= 0) {
+    return 'absent';
+  }
+  if (workingHours < 4) {
+    return 'half_day';
+  }
+  return record.lateFlag ? 'late' : 'present';
+}
+
 async function syncStaffAttendanceForDate(shopId: string, employeeId: string, date: string, now = dayjs()) {
-  const weeklyDays = await listStaffWeeklyShiftDays(shopId, employeeId);
-  const assignment = weeklyDays.find(item => item.dayOfWeek === weekdayIndexFromDate(date));
-  if (!assignment || assignment.isOff || !assignment.shiftId) {
+  const [employee, weeklyDays, approvedLeaves, holidays] = await Promise.all([
+    getEmployeeById(shopId, employeeId),
+    listStaffWeeklyShiftDays(shopId, employeeId),
+    listApprovedLeavesForStaff(shopId, employeeId),
+    listHolidayEntries(shopId),
+  ]);
+  if (!employee) {
+    return;
+  }
+  const holiday = findHolidayForDate(date, holidays);
+  const leave = findApprovedLeaveForDate(employeeId, date, approvedLeaves);
+  const decision = resolveShiftDecisionForDate({ date, employee, weeklyAssignments: weeklyDays });
+  const recordId = `${employeeId}_${date}`;
+  const recordRef = attendanceCol(shopId).doc(recordId);
+  const existing = await findAttendanceRecord(shopId, employeeId, date);
+
+  if (holiday || leave || decision.isOff) {
+    const status: AttendanceStatus = holiday ? 'holiday' : leave ? 'leave' : 'week_off';
+    const calendarRecord: AttendanceRecord = {
+      id: recordId,
+      employeeId,
+      shopId,
+      date,
+      shiftId: decision.shiftId ?? undefined,
+      status,
+      lateFlag: false,
+      workingHours: 0,
+      source: existing?.source ?? 'manual',
+      punchTime: existing?.punchTime ?? '',
+      checkInTime: existing?.checkInTime ?? '',
+      checkOutTime: existing?.checkOutTime ?? '',
+      notes: existing?.notes ?? (holiday ? 'Auto-marked holiday.' : leave ? 'Auto-marked approved leave.' : 'Auto-marked weekly off.'),
+      createdBy: existing?.createdBy ?? 'system',
+      createdAt: existing?.createdAt ?? nowIso(),
+      updatedAt: nowIso(),
+    };
+    await withFirestoreRetry(async () => {
+      await recordRef.set(calendarRecord, { merge: true });
+    });
     return;
   }
 
-  const shift = await getShiftTemplateById(shopId, assignment.shiftId);
+  if (!decision.shiftId) {
+    return;
+  }
+
+  const shift = await getShiftTemplateById(shopId, decision.shiftId);
   if (!shift) {
     return;
   }
@@ -871,13 +1190,6 @@ async function syncStaffAttendanceForDate(shopId: string, employeeId: string, da
   if (!window || now.isBefore(window.end)) {
     return;
   }
-
-  const recordId = `${employeeId}_${date}`;
-  const recordRef = attendanceCol(shopId).doc(recordId);
-  const snap = await withFirestoreRetry(async () => recordRef.get());
-  const existing = snap.exists()
-    ? serialize<AttendanceRecord>(snap.id, snap.data() as Omit<AttendanceRecord, 'id'>)
-    : null;
 
   if (!existing?.checkInTime) {
     const absentRecord: AttendanceRecord = {
@@ -1115,6 +1427,142 @@ async function saveStaffWeeklyShiftPlanToFirestore({ shopId, staffId, days }: Sa
   });
 
   return getStaffWeeklyShiftPlanFromFirestore(shopId, staffId);
+}
+
+async function appendShiftHistoryEntries(params: {
+  shopId: string;
+  staffId: string;
+  previousEmployee: Employee;
+  nextEmployee: Employee;
+  previousDays: StaffWeeklyShiftDay[];
+  nextDays: StaffWeeklyShiftDay[];
+}) {
+  const { shopId, staffId, previousEmployee, nextEmployee, previousDays, nextDays } = params;
+  const changedBy = auth().currentUser?.uid ?? 'system';
+  const createdAt = nowIso();
+  const batch = shopDoc(shopId).firestore.batch();
+
+  for (let dayOfWeek = 0; dayOfWeek < 7; dayOfWeek += 1) {
+    const referenceDate = dayjs().startOf('week').add(1, 'day').add(dayOfWeek, 'day').format('YYYY-MM-DD');
+    const previousDecision = resolveShiftDecisionForDate({ date: referenceDate, employee: previousEmployee, weeklyAssignments: previousDays });
+    const nextDecision = resolveShiftDecisionForDate({ date: referenceDate, employee: nextEmployee, weeklyAssignments: nextDays });
+    if (compareShiftDecisions(previousDecision, nextDecision)) {
+      continue;
+    }
+    const entry = buildShiftHistoryEntry({
+      id: shiftHistoryCol(shopId).doc().id,
+      shopId,
+      staffId,
+      date: referenceDate,
+      oldDecision: previousDecision,
+      newDecision: nextDecision,
+      changedBy,
+      createdAt,
+    });
+    batch.set(shiftHistoryCol(shopId).doc(entry.id), entry);
+  }
+
+  await batch.commit();
+}
+
+async function saveAdvancedShiftPlanToFirestore({
+  shopId,
+  staffId,
+  days,
+  mode,
+  fixedShiftId,
+  rotationStartDate,
+  rotationPattern,
+}: SaveAdvancedShiftPlanInput) {
+  const employeeRef = employeesCol(shopId).doc(staffId);
+  const employeeSnap = await withFirestoreRetry(async () => employeeRef.get());
+  if (!hasSnapshotExistsMethod(employeeSnap) || !employeeSnap.exists()) {
+    throw new Error('Staff profile not found.');
+  }
+
+  const raw = (employeeSnap.data() ?? {}) as Record<string, unknown>;
+  const previousEmployee = normalizeEmployeeSchedulingFields(serialize<Employee>(employeeSnap.id, raw as Omit<Employee, 'id'>), raw);
+  const previousDays = parseStaffWeeklyShiftDays(raw.weekly_shift_assignments ?? raw.weeklyShiftAssignments, shopId, staffId);
+  const now = nowIso();
+  const nextEmployee: Employee = {
+    ...previousEmployee,
+    shiftMode: mode,
+    defaultShiftId: mode === 'fixed' ? fixedShiftId ?? previousEmployee.defaultShiftId ?? '' : previousEmployee.defaultShiftId,
+    rotationStartDate: mode === 'rotational' ? (rotationStartDate ?? previousEmployee.rotationStartDate ?? '') : '',
+    rotationPattern: mode === 'rotational'
+      ? (rotationPattern ?? []).map(item => ({
+          ...item,
+          shiftId: normalizeNullableShiftId(item.shiftId),
+          isOff: Boolean(item.isOff),
+        }))
+      : [],
+    updatedAt: now,
+  };
+
+  await saveStaffWeeklyShiftPlanToFirestore({ shopId, staffId, days });
+
+  await withFirestoreRetry(async () => {
+    await employeeRef.set(
+      withEmployeeFieldCleanup({
+        shiftMode: mode,
+        shift_mode: mode,
+        defaultShiftId: mode === 'fixed' ? fixedShiftId ?? '' : previousEmployee.defaultShiftId ?? '',
+        rotationStartDate: mode === 'rotational' ? (rotationStartDate ?? '') : '',
+        rotation_start_date: mode === 'rotational' ? (rotationStartDate ?? '') : '',
+        rotationPattern: mode === 'rotational'
+          ? (rotationPattern ?? []).map(item => ({
+              weekIndex: item.weekIndex,
+              shiftId: normalizeNullableShiftId(item.shiftId),
+              isOff: Boolean(item.isOff),
+            }))
+          : [],
+        rotation_pattern: mode === 'rotational'
+          ? (rotationPattern ?? []).map(item => ({
+              week_index: item.weekIndex,
+              shift_id: normalizeNullableShiftId(item.shiftId),
+              is_off: Boolean(item.isOff),
+            }))
+          : [],
+        updatedAt: now,
+      }),
+      { merge: true },
+    );
+  });
+
+  const savedDays = await getStaffWeeklyShiftPlanFromFirestore(shopId, staffId);
+  await appendShiftHistoryEntries({
+    shopId,
+    staffId,
+    previousEmployee,
+    nextEmployee,
+    previousDays,
+    nextDays: savedDays,
+  });
+  return savedDays;
+}
+
+async function bulkAssignShiftPlanInFirestore({ shopId, staffIds, plan }: BulkAssignShiftPlanInput) {
+  const results = await Promise.allSettled(
+    staffIds.map(staffId =>
+      saveAdvancedShiftPlanToFirestore({
+        shopId,
+        staffId,
+        days: plan.days,
+        mode: plan.mode,
+        fixedShiftId: plan.fixedShiftId,
+        rotationPattern: plan.rotationPattern,
+        rotationStartDate: plan.rotationStartDate,
+      }),
+    ),
+  );
+
+  const failures = results.filter(item => item.status === 'rejected') as PromiseRejectedResult[];
+  if (failures.length) {
+    throw new Error(failures[0]?.reason instanceof Error ? failures[0].reason.message : 'Bulk assign partially failed.');
+  }
+  return results
+    .filter((item): item is PromiseFulfilledResult<StaffWeeklyShiftDay[]> => item.status === 'fulfilled')
+    .flatMap(item => item.value);
 }
 
 export const hrmsApi = createApi({
@@ -1500,7 +1948,8 @@ export const hrmsApi = createApi({
             return { data: null };
           }
 
-          const employee = serialize<Employee>(snap.id, snap.data() as Omit<Employee, 'id'>);
+          const raw = (snap.data() ?? {}) as Record<string, unknown>;
+          const employee = normalizeEmployeeSchedulingFields(serialize<Employee>(snap.id, raw as Omit<Employee, 'id'>), raw);
           if (employee.authUid && employee.authUid !== uid) {
             return { error: { message: 'Signed-in account is not linked to this staff profile.' } };
           }
@@ -1520,7 +1969,10 @@ export const hrmsApi = createApi({
                 return;
               }
               const data = snapshot.exists()
-                ? serialize<Employee>(snapshot.id, snapshot.data() as Omit<Employee, 'id'>)
+                ? normalizeEmployeeSchedulingFields(
+                    serialize<Employee>(snapshot.id, snapshot.data() as Omit<Employee, 'id'>),
+                    (snapshot.data() ?? {}) as Record<string, unknown>,
+                  )
                 : null;
               updateCachedData(() => data);
             },
@@ -1641,16 +2093,16 @@ export const hrmsApi = createApi({
           const now = dayjs();
           await syncStaffAttendanceEngine(shopId, employeeId, now);
           const shiftContext = await resolveAssignedShiftContext(shopId, employeeId, now);
-          if (!shiftContext.ok) {
+          if (!shiftContext.ok && shiftContext.message !== 'Shift not assigned') {
             return { error: { message: shiftContext.message } };
           }
 
-          const recordId = `${employeeId}_${shiftContext.date}`;
+          const assignmentDate = shiftContext.ok ? shiftContext.date : now.format('YYYY-MM-DD');
+          const assignedShift = shiftContext.ok ? shiftContext.shift : null;
+
+          const recordId = `${employeeId}_${assignmentDate}`;
           const recordRef = attendanceCol(shopId).doc(recordId);
-          const recordSnap = await withFirestoreRetry(async () => recordRef.get());
-          const existingRecord = recordSnap.exists()
-            ? serialize<AttendanceRecord>(recordSnap.id, recordSnap.data() as Omit<AttendanceRecord, 'id'>)
-            : null;
+          const existingRecord = await findAttendanceRecord(shopId, employeeId, assignmentDate);
 
           if (existingRecord?.checkInTime) {
             return { error: { message: 'Already checked-in' } };
@@ -1658,18 +2110,24 @@ export const hrmsApi = createApi({
 
           const yesterdayRecordId = `${employeeId}_${now.subtract(1, 'day').format('YYYY-MM-DD')}`;
           if (yesterdayRecordId !== recordId) {
-            const previousSnap = await withFirestoreRetry(async () => attendanceCol(shopId).doc(yesterdayRecordId).get());
-            if (previousSnap.exists()) {
-              const previousRecord = serialize<AttendanceRecord>(previousSnap.id, previousSnap.data() as Omit<AttendanceRecord, 'id'>);
-              if (previousRecord.checkInTime && !previousRecord.checkOutTime) {
-                return { error: { message: 'Already checked-in' } };
-              }
+            const previousRecord = await findAttendanceRecord(shopId, employeeId, now.subtract(1, 'day').format('YYYY-MM-DD'));
+            if (previousRecord?.checkInTime && !previousRecord.checkOutTime) {
+              return { error: { message: 'Already checked-in' } };
             }
           }
 
-          const initialStatus = getInitialAttendanceStatus(now, shiftContext.date, shiftContext.shift);
+          const initialStatus = assignedShift
+            ? getInitialAttendanceStatus(now, assignmentDate, assignedShift)
+            : { blocked: false, message: '', status: 'present' as AttendanceStatus, lateFlag: false };
           if (initialStatus.blocked || !initialStatus.status) {
             return { error: { message: initialStatus.message } };
+          }
+
+          const geoSnap = await withFirestoreRetry(async () => geoFencingSettingsDoc(shopId).get());
+          const geoSettings = normalizeGeoFencingSettings(shopId, geoSnap.data());
+          const geoValidation = await validateGeoFenceForAttendance({ settings: geoSettings });
+          if (!geoValidation.ok) {
+            return { error: { message: geoValidation.message } };
           }
 
           const nowIsoValue = now.toISOString();
@@ -1677,8 +2135,8 @@ export const hrmsApi = createApi({
             id: recordId,
             employeeId,
             shopId,
-            date: shiftContext.date,
-            shiftId: shiftContext.shift.id,
+            date: assignmentDate,
+            shiftId: assignedShift?.id,
             status: initialStatus.status,
             lateFlag: initialStatus.lateFlag,
             workingHours: 0,
@@ -1688,7 +2146,7 @@ export const hrmsApi = createApi({
             checkOutTime: existingRecord?.checkOutTime ?? '',
             checkInAt: nowIsoValue,
             checkOutAt: existingRecord?.checkOutAt ?? '',
-            notes: existingRecord?.notes ?? '',
+            notes: existingRecord?.notes ?? (assignedShift ? '' : 'Checked in without assigned shift.'),
             createdBy: uid,
             createdAt: existingRecord?.createdAt ?? nowIsoValue,
             updatedAt: nowIsoValue,
@@ -1716,11 +2174,10 @@ export const hrmsApi = createApi({
 
           let activeRecord: AttendanceRecord | null = null;
           for (const date of candidateDates) {
-            const snap = await withFirestoreRetry(async () => attendanceCol(shopId).doc(`${employeeId}_${date}`).get());
-            if (!snap.exists()) {
+            const record = await findAttendanceRecord(shopId, employeeId, date);
+            if (!record) {
               continue;
             }
-            const record = serialize<AttendanceRecord>(snap.id, snap.data() as Omit<AttendanceRecord, 'id'>);
             if (record.checkInTime && !record.checkOutTime) {
               activeRecord = record;
               break;
@@ -1734,20 +2191,25 @@ export const hrmsApi = createApi({
             return { error: { message: 'Already checked-out' } };
           }
 
-          const shift = activeRecord.shiftId ? await getShiftTemplateById(shopId, activeRecord.shiftId) : null;
-          if (!shift) {
-            return { error: { message: 'Assigned shift no longer exists.' } };
-          }
-
           const checkOutTime = formatAttendanceClock(now);
           const workingHours = calculateWorkedHours(activeRecord.checkInTime, checkOutTime);
+          let finalStatus: AttendanceStatus;
+          if (activeRecord.shiftId) {
+            const shift = await getShiftTemplateById(shopId, activeRecord.shiftId);
+            finalStatus = shift
+              ? calculateFinalAttendanceStatus({
+                  workingHours,
+                  shift,
+                  lateFlag: Boolean(activeRecord.lateFlag),
+                })
+              : calculateShiftlessAttendanceStatus(activeRecord, workingHours);
+          } else {
+            finalStatus = calculateShiftlessAttendanceStatus(activeRecord, workingHours);
+          }
+
           const updatedRecord: AttendanceRecord = {
             ...activeRecord,
-            status: calculateFinalAttendanceStatus({
-              workingHours,
-              shift,
-              lateFlag: Boolean(activeRecord.lateFlag),
-            }),
+            status: finalStatus,
             workingHours,
             checkOutTime,
             checkOutAt: now.toISOString(),
@@ -1772,15 +2234,12 @@ export const hrmsApi = createApi({
         try {
           const { shopId, employeeId } = await getCurrentStaffContext();
           const month = arg?.month && isValidMonthKey(arg.month) ? arg.month : currentMonth();
-          const salaryId = `${employeeId}_${month}`;
           const [salarySnap, advanceSnap] = await Promise.all([
-            salaryCol(shopId).doc(salaryId).get(),
+            findSalaryRecord(shopId, employeeId, month),
             advancesCol(shopId).where('employeeId', '==', employeeId).where('month', '==', month).get(),
           ]);
 
-          const salary = salarySnap.exists()
-            ? serialize<SalaryMonthly>(salarySnap.id, salarySnap.data() as Omit<SalaryMonthly, 'id'>)
-            : null;
+          const salary = salarySnap;
           const advances = advanceSnap.docs
             .map(doc => serialize<EmployeeAdvance>(doc.id, doc.data() as Omit<EmployeeAdvance, 'id'>))
             .sort((a, b) => String(b.paidAt ?? '').localeCompare(String(a.paidAt ?? '')));
@@ -1814,7 +2273,8 @@ export const hrmsApi = createApi({
             return { error: { message: 'Staff profile not found.' } };
           }
 
-          const employee = serialize<Employee>(employeeSnap.id, employeeSnap.data() as Omit<Employee, 'id'>);
+          const employeeRaw = (employeeSnap.data() ?? {}) as Record<string, unknown>;
+          const employee = normalizeEmployeeSchedulingFields(serialize<Employee>(employeeSnap.id, employeeRaw as Omit<Employee, 'id'>), employeeRaw);
           const [shiftSnap, weeklyDays] = await Promise.all([
             shiftsCol(shopId).get(),
             listStaffWeeklyShiftDays(shopId, employeeId),
@@ -1840,14 +2300,9 @@ export const hrmsApi = createApi({
             );
           });
           const shiftById = new Map(shifts.map(item => [item.id, item]));
-          const todayDayOfWeek = weekdayIndexFromDate(todayDate());
-          const todayAssignment = weeklyDays.find(item => item.dayOfWeek === todayDayOfWeek) ?? null;
+          const todayDecision = resolveShiftDecisionForDate({ date: todayDate(), employee, weeklyAssignments: weeklyDays });
           const defaultShift = employee.defaultShiftId ? shiftById.get(employee.defaultShiftId) ?? null : null;
-          const todayShift = todayAssignment?.isOff
-            ? null
-            : todayAssignment?.shiftId
-              ? shiftById.get(todayAssignment.shiftId) ?? null
-              : defaultShift;
+          const todayShift = todayDecision.shiftId ? shiftById.get(todayDecision.shiftId) ?? null : null;
 
           return {
             data: {
@@ -1868,7 +2323,8 @@ export const hrmsApi = createApi({
                 return { error: { message: 'Staff profile not found.' } };
               }
 
-              const employee = serialize<Employee>(employeeSnap.id, employeeSnap.data() as Omit<Employee, 'id'>);
+              const employeeRaw = (employeeSnap.data() ?? {}) as Record<string, unknown>;
+              const employee = normalizeEmployeeSchedulingFields(serialize<Employee>(employeeSnap.id, employeeRaw as Omit<Employee, 'id'>), employeeRaw);
               const shiftSnap = await shiftsCol(shopId).get();
               const shifts = shiftSnap.docs.map(doc => {
                 const raw = (doc.data() ?? {}) as Record<string, unknown>;
@@ -1892,13 +2348,8 @@ export const hrmsApi = createApi({
               const shiftById = new Map(shifts.map(item => [item.id, item]));
               const weeklyDays = await listStaffWeeklyShiftDays(shopId, employeeId);
               const defaultShift = employee.defaultShiftId ? shiftById.get(employee.defaultShiftId) ?? null : null;
-              const todayDayOfWeek = weekdayIndexFromDate(todayDate());
-              const todayAssignment = weeklyDays.find(item => item.dayOfWeek === todayDayOfWeek) ?? null;
-              const todayShift = todayAssignment?.isOff
-                ? null
-                : todayAssignment?.shiftId
-                  ? shiftById.get(todayAssignment.shiftId) ?? null
-                  : defaultShift;
+              const todayDecision = resolveShiftDecisionForDate({ date: todayDate(), employee, weeklyAssignments: weeklyDays });
+              const todayShift = todayDecision.shiftId ? shiftById.get(todayDecision.shiftId) ?? null : null;
 
               return {
                 data: {
@@ -1967,7 +2418,8 @@ export const hrmsApi = createApi({
             return { error: { message: 'Employee record not found.' } };
           }
 
-          const employee = serialize<Employee>(employeeSnap.id, employeeSnap.data() as Omit<Employee, 'id'>);
+          const employeeRaw = (employeeSnap.data() ?? {}) as Record<string, unknown>;
+          const employee = normalizeEmployeeSchedulingFields(serialize<Employee>(employeeSnap.id, employeeRaw as Omit<Employee, 'id'>), employeeRaw);
           if (employee.status !== 'active') {
             return { error: { message: 'Only active staff can receive login access.' } };
           }
@@ -2029,7 +2481,8 @@ export const hrmsApi = createApi({
             return { error: { message: 'Employee record not found.' } };
           }
 
-          const employee = serialize<Employee>(employeeSnap.id, employeeSnap.data() as Omit<Employee, 'id'>);
+          const employeeRaw = (employeeSnap.data() ?? {}) as Record<string, unknown>;
+          const employee = normalizeEmployeeSchedulingFields(serialize<Employee>(employeeSnap.id, employeeRaw as Omit<Employee, 'id'>), employeeRaw);
           if (!employee.authUid) {
             return { error: { message: 'Staff login is not provisioned yet.' } };
           }
@@ -2173,7 +2626,10 @@ export const hrmsApi = createApi({
         try {
           const snapshot = await employeesCol(shopId).orderBy('createdAt', 'desc').get();
           const data = snapshot.docs.map(doc =>
-            serialize<Employee>(doc.id, doc.data() as Omit<Employee, 'id'>),
+            normalizeEmployeeSchedulingFields(
+              serialize<Employee>(doc.id, doc.data() as Omit<Employee, 'id'>),
+              (doc.data() ?? {}) as Record<string, unknown>,
+            ),
           );
           return { data };
         } catch (error) {
@@ -2194,7 +2650,10 @@ export const hrmsApi = createApi({
                 return;
               }
               const data = snapshot.docs.map(doc =>
-                serialize<Employee>(doc.id, doc.data() as Omit<Employee, 'id'>),
+                normalizeEmployeeSchedulingFields(
+                  serialize<Employee>(doc.id, doc.data() as Omit<Employee, 'id'>),
+                  (doc.data() ?? {}) as Record<string, unknown>,
+                ),
               );
               updateCachedData(() => data);
             },
@@ -2224,7 +2683,7 @@ export const hrmsApi = createApi({
           await withFirestoreRetry(async () => {
             await docRef.set(withEmployeeFieldCleanup(payload), { merge: true });
           });
-          return { data: payload };
+          return { data: normalizeEmployeeSchedulingFields(payload) };
         } catch (error) {
           return { error: { message: toUserErrorMessage(error) } };
         }
@@ -2713,6 +3172,31 @@ export const hrmsApi = createApi({
       invalidatesTags: ['Settings', 'Reports'],
     }),
 
+    cloneShiftTemplate: builder.mutation<ShiftTemplate, { shopId: string; shiftId: string; name?: string }>({
+      async queryFn({ shopId, shiftId, name }) {
+        try {
+          const existing = await getShiftTemplateById(shopId, shiftId);
+          if (!existing) {
+            return { error: { message: 'Shift not found.' } };
+          }
+          const cloned = await createShiftTemplateInFirestore({
+            shopId,
+            name: name?.trim() || `${existing.name} Copy`,
+            startTime: existing.startTime,
+            endTime: existing.endTime,
+            durationHours: existing.durationHours,
+            graceTime: existing.graceTime,
+            lateRuleMinutes: existing.lateRuleMinutes,
+            halfDayHours: existing.halfDayHours,
+          });
+          return { data: cloned };
+        } catch (error) {
+          return { error: { message: toUserErrorMessage(error) } };
+        }
+      },
+      invalidatesTags: ['Settings', 'Reports'],
+    }),
+
     deleteShiftTemplate: builder.mutation<{ id: string }, { shopId: string; shiftId: string }>({
       async queryFn({ shopId, shiftId }) {
         try {
@@ -2753,12 +3237,34 @@ export const hrmsApi = createApi({
     saveStaffWeeklyShiftPlanV2: builder.mutation<StaffWeeklyShiftDay[], SaveStaffWeeklyShiftPlanInput>({
       async queryFn({ shopId, staffId, days }) {
         try {
-          return { data: await saveStaffWeeklyShiftPlanToFirestore({ shopId, staffId, days }) };
+          return { data: await saveAdvancedShiftPlanToFirestore({ shopId, staffId, days, mode: 'dynamic' }) };
         } catch (error) {
           return { error: { message: toUserErrorMessage(error) } };
         }
       },
       invalidatesTags: ['Settings', 'Reports'],
+    }),
+
+    saveAdvancedShiftPlan: builder.mutation<StaffWeeklyShiftDay[], SaveAdvancedShiftPlanInput>({
+      async queryFn(input) {
+        try {
+          return { data: await saveAdvancedShiftPlanToFirestore(input) };
+        } catch (error) {
+          return { error: { message: toUserErrorMessage(error) } };
+        }
+      },
+      invalidatesTags: ['Settings', 'Reports', 'Employees'],
+    }),
+
+    bulkAssignShiftPlan: builder.mutation<StaffWeeklyShiftDay[], BulkAssignShiftPlanInput>({
+      async queryFn(input) {
+        try {
+          return { data: await bulkAssignShiftPlanInFirestore(input) };
+        } catch (error) {
+          return { error: { message: toUserErrorMessage(error) } };
+        }
+      },
+      invalidatesTags: ['Settings', 'Reports', 'Employees'],
     }),
 
     getShopWeeklyShiftAssignments: builder.query<StaffWeeklyShiftDay[], { shopId: string }>({
@@ -3210,6 +3716,59 @@ export const hrmsApi = createApi({
       providesTags: ['Reports'],
     }),
 
+    getAttendanceAnalyticsReport: builder.query<AttendanceAnalyticsOutput, AttendanceAnalyticsFilter>({
+      async queryFn({ shopId, fromDate, toDate, staffId }) {
+        try {
+          const [employeeSnap, attendanceSnap] = await Promise.all([
+            withFirestoreRetry(async () => employeesCol(shopId).get()),
+            withFirestoreRetry(async () =>
+              attendanceCol(shopId)
+                .where('date', '>=', fromDate)
+                .where('date', '<=', toDate)
+                .get(),
+            ),
+          ]);
+
+          const employees = employeeSnap.docs
+            .map(doc => {
+              const raw = doc.data() as Record<string, unknown>;
+              return {
+                id: doc.id,
+                joiningDate: String(raw.joiningDate ?? raw.joining_date ?? ''),
+                weeklyOff: String(raw.weeklyOff ?? raw.weekly_off ?? 'none') as WeeklyOffDay,
+              };
+            })
+            .filter(employee => !staffId || employee.id === staffId);
+
+          const weeklyAssignmentsByStaffId = employeeSnap.docs.reduce<Record<string, StaffWeeklyShiftDay[]>>((acc, doc) => {
+            if (staffId && doc.id !== staffId) {
+              return acc;
+            }
+            const raw = doc.data() as Record<string, unknown>;
+            acc[doc.id] = parseStaffWeeklyShiftDays(raw.weekly_shift_assignments ?? raw.weeklyShiftAssignments, shopId, doc.id);
+            return acc;
+          }, {});
+
+          const attendance = attendanceSnap.docs
+            .map(doc => serialize<AttendanceRecord>(doc.id, doc.data() as Omit<AttendanceRecord, 'id'>))
+            .filter(record => !staffId || record.employeeId === staffId);
+
+          return {
+            data: calculateAttendanceAnalytics({
+              attendanceRecords: attendance,
+              employees,
+              dateRange: { startDate: fromDate, endDate: toDate },
+              staffId,
+              weeklyAssignmentsByStaffId,
+            }),
+          };
+        } catch (error) {
+          return { error: { message: (error as Error).message } };
+        }
+      },
+      providesTags: ['Reports', 'Attendance'],
+    }),
+
     getSalaryReport: builder.query<SalaryMonthly[], { shopId: string; month: string }>({
       async queryFn({ shopId, month }) {
         try {
@@ -3309,6 +3868,36 @@ export const hrmsApi = createApi({
       providesTags: ['Biometric'],
     }),
 
+    getGeoFencingSettings: builder.query<GeoFencingSettings, string>({
+      async queryFn(shopId) {
+        try {
+          const snap = await geoFencingSettingsDoc(shopId).get();
+          return { data: normalizeGeoFencingSettings(shopId, snap.data()) };
+        } catch (error) {
+          return { error: { message: (error as Error).message } };
+        }
+      },
+      async onCacheEntryAdded(shopId, { cacheDataLoaded, cacheEntryRemoved, updateCachedData }) {
+        try {
+          await cacheDataLoaded;
+        } catch {
+          // Listener can still recover state later.
+        }
+        const unsubscribe = geoFencingSettingsDoc(shopId).onSnapshot(
+          snapshot => {
+            if (!hasSnapshotExistsMethod(snapshot)) {
+              return;
+            }
+            updateCachedData(() => normalizeGeoFencingSettings(shopId, snapshot.data()));
+          },
+          error => logSnapshotListenerError('GEO_FENCING_SETTINGS_LISTENER', error),
+        );
+        await cacheEntryRemoved;
+        unsubscribe();
+      },
+      providesTags: ['Settings'],
+    }),
+
     upsertBiometricSettings: builder.mutation<{ ok: true }, { shopId: string; settings: BiometricSettings }>({
       async queryFn({ shopId, settings }) {
         try {
@@ -3319,6 +3908,60 @@ export const hrmsApi = createApi({
         }
       },
       invalidatesTags: ['Biometric'],
+    }),
+
+    upsertGeoFencingSettings: builder.mutation<
+      { ok: true; settings: GeoFencingSettings },
+      {
+        shopId: string;
+        latitude: number;
+        longitude: number;
+        radius: number;
+        enabled?: boolean;
+        allowAttendanceWhenLocationMissing?: boolean;
+        accuracyBufferMeters?: number;
+        requireGpsAccuracyMeters?: number;
+      }
+    >({
+      async queryFn({
+        shopId,
+        latitude,
+        longitude,
+        radius,
+        enabled = true,
+        allowAttendanceWhenLocationMissing,
+        accuracyBufferMeters,
+        requireGpsAccuracyMeters,
+      }) {
+        try {
+          const validation = validateShopLocationConfig({ shopId, latitude, longitude, radius });
+          if (!validation.ok) {
+            return { error: { message: validation.message } };
+          }
+
+          const location = buildShopLocationConfig({ shopId, latitude, longitude, radius });
+          const settings: GeoFencingSettings = {
+            enabled,
+            location,
+            accuracyBufferMeters: Math.max(
+              0,
+              Number(accuracyBufferMeters ?? DEFAULT_GEO_FENCING_SETTINGS.accuracyBufferMeters),
+            ),
+            allowAttendanceWhenLocationMissing:
+              allowAttendanceWhenLocationMissing ?? DEFAULT_GEO_FENCING_SETTINGS.allowAttendanceWhenLocationMissing,
+            requireGpsAccuracyMeters: Math.max(
+              0,
+              Number(requireGpsAccuracyMeters ?? DEFAULT_GEO_FENCING_SETTINGS.requireGpsAccuracyMeters),
+            ),
+          };
+
+          await geoFencingSettingsDoc(shopId).set(settings, { merge: true });
+          return { data: { ok: true, settings } };
+        } catch (error) {
+          return { error: { message: (error as Error).message } };
+        }
+      },
+      invalidatesTags: ['Settings'],
     }),
 
     upsertPayrollSettings: builder.mutation<{ ok: true }, { shopId: string; settings: PayrollSettings }>({
@@ -3368,9 +4011,12 @@ export const {
   useGetShiftTemplatesQuery,
   useCreateShiftTemplateMutation,
   useUpdateShiftTemplateMutation,
+  useCloneShiftTemplateMutation,
   useDeleteShiftTemplateMutation,
   useGetStaffWeeklyShiftPlanByStaffQuery,
   useSaveStaffWeeklyShiftPlanV2Mutation,
+  useSaveAdvancedShiftPlanMutation,
+  useBulkAssignShiftPlanMutation,
   useGetShopWeeklyShiftAssignmentsQuery,
   useUpsertShiftMutation,
   useMarkSalaryPaidMutation,
@@ -3379,9 +4025,12 @@ export const {
   useGetShopDashboardQuery,
   useGetShopAnalyticsQuery,
   useGetAttendanceReportQuery,
+  useGetAttendanceAnalyticsReportQuery,
   useGetSalaryReportQuery,
   useGetPayrollSettingsQuery,
   useUpsertPayrollSettingsMutation,
   useGetBiometricSettingsQuery,
   useUpsertBiometricSettingsMutation,
+  useGetGeoFencingSettingsQuery,
+  useUpsertGeoFencingSettingsMutation,
 } = hrmsApi;

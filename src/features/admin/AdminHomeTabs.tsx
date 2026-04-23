@@ -1,6 +1,7 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AdminTabParamList } from '../../types/navigation';
 import { AdminDashboardScreen } from './AdminDashboardScreen';
@@ -8,6 +9,7 @@ import { AdminShopsStack } from './AdminShopsStack';
 import { AdminProfileScreen } from './AdminProfileScreen';
 import { AdminStatusScreen } from './AdminStatusScreen';
 import { colors } from '../../theme/colors';
+import { hp, sp } from '../../utils/responsive';
 
 const Tabs = createBottomTabNavigator<AdminTabParamList>();
 
@@ -25,18 +27,31 @@ export function AdminHomeTabs() {
         tabBarHideOnKeyboard: true,
         tabBarLabelStyle: styles.tabLabel,
         tabBarItemStyle: styles.tabItem,
-        tabBarIcon: ({ color, focused }) => (
-          <View style={[styles.iconBubble, focused && styles.iconBubbleActive]}>
-            <Text style={[styles.iconText, { color }]}>{tabIcon(route.name)}</Text>
-          </View>
-        ),
+        tabBarIcon: ({ color, focused, size }) => {
+          const icon = tabIcon(route.name, focused);
+          const scaledSize = sp(size);
+
+          return (
+            <Ionicons
+              name={icon}
+              size={focused ? scaledSize + 2 : scaledSize}
+              color={focused ? colors.primary : color}
+              style={focused ? styles.iconActive : undefined}
+            />
+          );
+        },
         tabBarStyle: {
-          height: 56 + bottomInset,
-          paddingTop: 0,
+          height: hp(62) + bottomInset,
+          paddingTop: hp(6),
           paddingBottom: bottomInset,
           borderTopWidth: 1,
-          borderTopColor: '#d7dee8',
-          backgroundColor: '#ffffff',
+          borderTopColor: '#cfd9e8',
+          backgroundColor: '#f8fbff',
+          shadowColor: colors.shadow,
+          shadowOpacity: 0.08,
+          shadowOffset: { width: 0, height: hp(-4) },
+          shadowRadius: hp(16),
+          elevation: 10,
         },
       })}>
       <Tabs.Screen name="Home" component={AdminDashboardScreen} />
@@ -47,45 +62,32 @@ export function AdminHomeTabs() {
   );
 }
 
-function tabIcon(routeName: keyof AdminTabParamList) {
+function tabIcon(routeName: keyof AdminTabParamList, focused: boolean) {
   switch (routeName) {
     case 'Home':
-      return '⌂';
+      return focused ? 'grid' : 'grid-outline';
     case 'Shops':
-      return '▦';
+      return focused ? 'storefront' : 'storefront-outline';
     case 'Status':
-      return '◍';
+      return focused ? 'stats-chart' : 'stats-chart-outline';
     case 'Profile':
-      return '◎';
+      return focused ? 'shield-checkmark' : 'shield-checkmark-outline';
     default:
-      return '?';
+      return focused ? 'ellipse' : 'ellipse-outline';
   }
 }
 
 const styles = StyleSheet.create({
   tabLabel: {
-    fontSize: 12,
+    fontSize: sp(12),
     fontWeight: '700',
-    marginBottom: 0,
+    marginBottom: hp(2),
   },
   tabItem: {
-    paddingTop: 2,
-    paddingBottom: 3,
+    paddingTop: hp(2),
+    paddingBottom: hp(4),
   },
-  iconBubble: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#eef2f7',
-  },
-  iconBubbleActive: {
-    backgroundColor: colors.primarySoft,
-  },
-  iconText: {
-    fontSize: 16,
-    fontWeight: '700',
-    lineHeight: 18,
+  iconActive: {
+    transform: [{ translateY: -1 }],
   },
 });

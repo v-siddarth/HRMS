@@ -44,7 +44,7 @@ type AttendanceStackParamList = {
 
 type AttendanceFilter = 'all' | AttendanceStatus;
 
-const attendanceStatuses: AttendanceStatus[] = ['present', 'absent', 'late', 'half_day', 'leave'];
+const attendanceStatuses: AttendanceStatus[] = ['present', 'absent', 'late', 'half_day', 'leave', 'holiday', 'week_off'];
 
 const Stack = createNativeStackNavigator<AttendanceStackParamList>();
 
@@ -302,6 +302,8 @@ function AttendanceRegulariseScreen({ navigation }: { navigation: any }) {
       late: 0,
       half_day: 0,
       leave: 0,
+      holiday: 0,
+      week_off: 0,
     };
     activeEmployees.forEach(employee => {
       const existing = attendance.find(a => a.employeeId === employee.id);
@@ -322,6 +324,7 @@ function AttendanceRegulariseScreen({ navigation }: { navigation: any }) {
       { key: 'late' as const, label: 'Late', count: summary.late, accent: '#ba7a1d' },
       { key: 'half_day' as const, label: 'Half Day', count: summary.half_day, accent: '#475569' },
       { key: 'leave' as const, label: 'Leave', count: summary.leave, accent: '#1458bf' },
+      { key: 'holiday' as const, label: 'Holiday', count: summary.holiday, accent: '#7c3aed' },
     ],
     [activeEmployees.length, summary],
   );
@@ -911,6 +914,8 @@ function AllAttendanceReportScreen({ navigation }: { navigation: any }) {
         late: 0,
         half_day: 0,
         leave: 0,
+        holiday: 0,
+        week_off: 0,
       },
     );
   }, [rows]);
@@ -1206,6 +1211,12 @@ function statusLabel(status: AttendanceStatus) {
   }
   if (status === 'leave') {
     return 'Leave';
+  }
+  if (status === 'holiday') {
+    return 'Holiday';
+  }
+  if (status === 'week_off') {
+    return 'Week Off';
   }
   return status.charAt(0).toUpperCase() + status.slice(1);
 }

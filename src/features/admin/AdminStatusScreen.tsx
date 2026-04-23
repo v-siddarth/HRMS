@@ -5,6 +5,7 @@ import { useGetShopsQuery, useUpsertShopMutation } from '../../store/hrmsApi';
 import { colors } from '../../theme/colors';
 import type { ShopStatus } from '../../types/models';
 import { logError, logInfo } from '../../utils/logger';
+import { wp, hp, sp } from '../../utils/responsive';
 
 export function AdminStatusScreen() {
   const [query, setQuery] = useState('');
@@ -79,12 +80,7 @@ export function AdminStatusScreen() {
         </View>
 
         <Card>
-          <Field
-            label="Search Shops"
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Shop name / owner / email / contact"
-          />
+          <Field label="Search Shops" value={query} onChangeText={setQuery} placeholder="Shop name / owner / email / contact" />
         </Card>
 
         <Text style={styles.sectionTitle}>{isLoading ? 'Loading shops...' : `${filteredShops.length} shops`}</Text>
@@ -124,8 +120,7 @@ export function AdminStatusScreen() {
                     <Pressable
                       disabled={busy || shop.status === 'active'}
                       style={({ pressed }) => [
-                        styles.actionBtn,
-                        styles.actionActiveBtn,
+                        styles.actionBtn, styles.actionActiveBtn,
                         shop.status === 'active' && styles.actionBtnSelected,
                         pressed && !busy && shop.status !== 'active' && styles.actionActiveBtnPressed,
                       ]}
@@ -135,8 +130,7 @@ export function AdminStatusScreen() {
                     <Pressable
                       disabled={busy || shop.status === 'inactive'}
                       style={({ pressed }) => [
-                        styles.actionBtn,
-                        styles.actionInactiveBtn,
+                        styles.actionBtn, styles.actionInactiveBtn,
                         shop.status === 'inactive' && styles.actionBtnSelected,
                         pressed && !busy && shop.status !== 'inactive' && styles.actionInactiveBtnPressed,
                       ]}
@@ -177,193 +171,56 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  content: {
-    gap: 12,
-    paddingBottom: 20,
-  },
-  headerWrap: {
-    gap: 4,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  subtitle: {
-    color: colors.textSecondary,
-    lineHeight: 20,
-  },
-  countRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
+  content: { gap: hp(12), paddingBottom: hp(20) },
+  headerWrap: { gap: hp(4) },
+  title: { fontSize: sp(24), fontWeight: '800', color: colors.textPrimary },
+  subtitle: { color: colors.textSecondary, lineHeight: sp(20), fontSize: sp(14) },
+  countRow: { flexDirection: 'row', gap: wp(10) },
   countCard: {
-    flex: 1,
-    minHeight: 92,
-    borderWidth: 1,
-    borderColor: '#d7dee8',
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 8,
+    flex: 1, minHeight: hp(92), borderWidth: 1, borderColor: '#d7dee8',
+    borderRadius: wp(14), alignItems: 'center', justifyContent: 'center', paddingHorizontal: wp(8),
   },
-  countLabel: {
-    color: colors.textMuted,
-    fontWeight: '700',
-    fontSize: 12,
-    textAlign: 'center',
-  },
-  countValue: {
-    marginTop: 6,
-    fontSize: 26,
-    fontWeight: '800',
-  },
-  sectionTitle: {
-    color: colors.textPrimary,
-    fontWeight: '800',
-    fontSize: 16,
-  },
-  listWrap: {
-    gap: 12,
-  },
+  countLabel: { color: colors.textMuted, fontWeight: '700', fontSize: sp(12), textAlign: 'center' },
+  countValue: { marginTop: hp(6), fontSize: sp(26), fontWeight: '800' },
+  sectionTitle: { color: colors.textPrimary, fontWeight: '800', fontSize: sp(16) },
+  listWrap: { gap: hp(12) },
   shopCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#d7dee8',
-    padding: 12,
-    gap: 10,
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.08,
-    shadowOffset: { width: 0, height: 6 },
-    shadowRadius: 12,
-    elevation: 3,
+    backgroundColor: '#ffffff', borderRadius: wp(16), borderWidth: 1, borderColor: '#d7dee8',
+    padding: wp(12), gap: hp(10), shadowColor: '#0f172a', shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: hp(6) }, shadowRadius: wp(12), elevation: 3,
   },
-  shopTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 10,
-  },
-  shopName: {
-    flex: 1,
-    color: colors.textPrimary,
-    fontWeight: '800',
-    fontSize: 17,
-    lineHeight: 22,
-  },
-  statusBadge: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  statusActive: {
-    borderColor: '#b7ead3',
-    backgroundColor: '#e8f9f1',
-  },
-  statusInactive: {
-    borderColor: '#f7c2c2',
-    backgroundColor: '#fdeeee',
-  },
-  statusBadgeText: {
-    fontWeight: '800',
-    fontSize: 11,
-  },
-  statusTextActive: {
-    color: '#0f9f63',
-  },
-  statusTextInactive: {
-    color: '#c22a2a',
-  },
+  shopTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: wp(10) },
+  shopName: { flex: 1, color: colors.textPrimary, fontWeight: '800', fontSize: sp(17), lineHeight: sp(22) },
+  statusBadge: { borderWidth: 1, borderRadius: 999, paddingHorizontal: wp(10), paddingVertical: hp(5) },
+  statusActive: { borderColor: '#b7ead3', backgroundColor: '#e8f9f1' },
+  statusInactive: { borderColor: '#f7c2c2', backgroundColor: '#fdeeee' },
+  statusBadgeText: { fontWeight: '800', fontSize: sp(11) },
+  statusTextActive: { color: '#0f9f63' },
+  statusTextInactive: { color: '#c22a2a' },
   infoBox: {
-    borderWidth: 1,
-    borderColor: '#e6ebf2',
-    borderRadius: 12,
-    backgroundColor: '#f8fafc',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 8,
+    borderWidth: 1, borderColor: '#e6ebf2', borderRadius: wp(12),
+    backgroundColor: '#f8fafc', paddingHorizontal: wp(10), paddingVertical: hp(8), gap: hp(8),
   },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  infoLabel: {
-    width: 76,
-    color: colors.textMuted,
-    fontWeight: '700',
-    fontSize: 12,
-    paddingTop: 2,
-  },
-  infoValue: {
-    flex: 1,
-    color: colors.textPrimary,
-    fontWeight: '800',
-    fontSize: 13,
-    lineHeight: 18,
-    textAlign: 'right',
-  },
-  statusActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: wp(10) },
+  infoLabel: { minWidth: wp(76), color: colors.textMuted, fontWeight: '700', fontSize: sp(12), paddingTop: hp(2) },
+  infoValue: { flex: 1, color: colors.textPrimary, fontWeight: '800', fontSize: sp(13), lineHeight: sp(18), textAlign: 'right' },
+  statusActions: { flexDirection: 'row', gap: wp(10) },
   actionBtn: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
+    flex: 1, minHeight: hp(44), borderRadius: wp(10),
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1,
   },
-  actionBtnSelected: {
-    opacity: 0.7,
-  },
-  actionActiveBtn: {
-    backgroundColor: '#e8f9f1',
-    borderColor: '#b7ead3',
-  },
-  actionInactiveBtn: {
-    backgroundColor: '#fdeeee',
-    borderColor: '#f7c2c2',
-  },
-  actionActiveBtnPressed: {
-    backgroundColor: '#d7f3e6',
-  },
-  actionInactiveBtnPressed: {
-    backgroundColor: '#fbdede',
-  },
-  actionText: {
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  actionTextActive: {
-    color: '#0f9f63',
-  },
-  actionTextInactive: {
-    color: '#c22a2a',
-  },
+  actionBtnSelected: { opacity: 0.7 },
+  actionActiveBtn: { backgroundColor: '#e8f9f1', borderColor: '#b7ead3' },
+  actionInactiveBtn: { backgroundColor: '#fdeeee', borderColor: '#f7c2c2' },
+  actionActiveBtnPressed: { backgroundColor: '#d7f3e6' },
+  actionInactiveBtnPressed: { backgroundColor: '#fbdede' },
+  actionText: { fontWeight: '800', fontSize: sp(13) },
+  actionTextActive: { color: '#0f9f63' },
+  actionTextInactive: { color: '#c22a2a' },
   emptyWrap: {
-    borderWidth: 1,
-    borderColor: '#d7dee8',
-    borderRadius: 14,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 22,
-    paddingHorizontal: 16,
-    gap: 6,
+    borderWidth: 1, borderColor: '#d7dee8', borderRadius: wp(14), backgroundColor: '#ffffff',
+    alignItems: 'center', justifyContent: 'center', paddingVertical: hp(22), paddingHorizontal: wp(16), gap: hp(6),
   },
-  emptyTitle: {
-    color: colors.textPrimary,
-    fontWeight: '800',
-    fontSize: 17,
-  },
-  emptySub: {
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
+  emptyTitle: { color: colors.textPrimary, fontWeight: '800', fontSize: sp(17) },
+  emptySub: { color: colors.textSecondary, textAlign: 'center', lineHeight: sp(20), fontSize: sp(14) },
 });

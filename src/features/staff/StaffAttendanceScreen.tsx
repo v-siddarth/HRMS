@@ -53,6 +53,8 @@ const FILTERS: Array<{ key: FilterOption; label: string }> = [
   { key: 'present', label: 'Present' },
   { key: 'absent', label: 'Absent' },
   { key: 'leave', label: 'Leave' },
+  { key: 'holiday', label: 'Holiday' },
+  { key: 'week_off', label: 'Week Off' },
   { key: 'half_day', label: 'Half Day' },
   { key: 'late', label: 'Late' },
 ];
@@ -178,7 +180,7 @@ export function StaffAttendanceScreen() {
     },
     {
       label: 'Leave/Off',
-      value: String((summary?.leaveCount ?? 0) + monthlyOffCount),
+      value: String((summary?.leaveCount ?? 0) + monthlyOffCount + resolvedRows.filter(row => row.status === 'week_off').length),
       icon: 'cafe-outline',
       tone: 'info' as Tone,
     },
@@ -769,6 +771,8 @@ function visualStatusLabel(status: DayVisualStatus) {
       return 'Half Day';
     case 'off_day':
       return 'Off Day';
+    case 'week_off':
+      return 'Week Off';
     case 'no_record':
       return 'No Record';
     case 'upcoming':
@@ -793,6 +797,7 @@ function visualStatusTone(status: DayVisualStatus): Tone {
       return 'danger';
     case 'leave':
     case 'off_day':
+    case 'week_off':
       return 'info';
     case 'no_record':
     case 'upcoming':

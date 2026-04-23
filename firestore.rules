@@ -5,23 +5,23 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function hasRole(role) {
+      return signedIn() && request.auth.token.role == role;
+    }
+
     function isAdmin() {
-      return signedIn() && request.auth.token.role == 'super_admin';
+      return hasRole('super_admin');
     }
 
     function isShopManager(shopId) {
-      return signedIn() && request.auth.token.role == 'shop_manager' && request.auth.token.shopId == shopId;
+      return hasRole('shop_manager')
+        && request.auth.token.shopId == shopId;
     }
 
     function isStaff(shopId) {
-      return signedIn()
-        && request.auth.token.role == 'staff'
+      return hasRole('staff')
         && request.auth.token.shopId == shopId
         && request.auth.token.employeeId != null;
-    }
-
-    function isOwnEmployee(employeeId) {
-      return signedIn() && request.auth.token.employeeId == employeeId;
     }
 
     function isShopOwnerDoc() {
@@ -29,7 +29,78 @@ service cloud.firestore {
     }
 
     function isShopOwner(shopId) {
-      return signedIn() && get(/databases/$(database)/documents/shops/$(shopId)).data.authUid == request.auth.uid;
+      return signedIn()
+        && exists(/databases/$(database)/documents/shops/$(shopId))
+        && get(/databases/$(database)/documents/shops/$(shopId)).data.authUid == request.auth.uid;
+    }
+
+    function isOwnEmployee(employeeId) {
+      return signedIn()
+        && request.auth.token.employeeId != null
+        && request.auth.token.employeeId == employeeId;
+    }
+
+    function isOwnEmployeeByAuthUid() {
+      return signedIn()
+        && resource != null
+        && resource.data.authUid == request.auth.uid;
+    }
+
+    function isOwnEmployeeDocByRef(shopId, employeeId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/shops/$(shopId)/employees/$(employeeId))
+        && get(/databases/$(database)/documents/shops/$(shopId)/employees/$(employeeId)).data.authUid == request.auth.uid;
+    }
+
+    function isOwnAttendanceByDocId(attendanceId) {
+      return signedIn()
+        && request.auth.token.employeeId != null
+        && attendanceId.matches('^' + request.auth.token.employeeId + '_.*$');
+    }
+
+    function isOwnSalaryByDocId(salaryId) {
+      return signedIn()
+        && request.auth.token.employeeId != null
+        && salaryId.matches('^' + request.auth.token.employeeId + '_.*$');
+    }
+
+    function isOwnAttendanceResource(shopId) {
+      return isStaff(shopId)
+        && resource != null
+        && resource.data.shopId == shopId
+        && resource.data.employeeId == request.auth.token.employeeId;
+    }
+
+    function isOwnAttendanceCreate(shopId) {
+      return isStaff(shopId)
+        && request.resource.data.shopId == shopId
+        && request.resource.data.employeeId == request.auth.token.employeeId;
+    }
+
+    function isOwnAttendanceUpdate(shopId) {
+      return isStaff(shopId)
+        && resource != null
+        && resource.data.shopId == shopId
+        && resource.data.employeeId == request.auth.token.employeeId
+        && request.resource.data.shopId == shopId
+        && request.resource.data.employeeId == request.auth.token.employeeId;
+    }
+
+    function isOwnWeeklyShiftPlan(shopId) {
+      return isStaff(shopId)
+        && resource != null
+        && (
+          !('employeeId' in resource.data)
+          || resource.data.employeeId == request.auth.token.employeeId
+        )
+        && (
+          !('employeeIds' in resource.data)
+          || request.auth.token.employeeId in resource.data.employeeIds
+        )
+        && (
+          !('shopId' in resource.data)
+          || resource.data.shopId == shopId
+        );
     }
 
     match /admins/{uid} {
@@ -37,7 +108,12 @@ service cloud.firestore {
     }
 
     match /shops/{shopId} {
-      allow read: if isAdmin() || isShopManager(shopId) || isStaff(shopId) || isShopOwnerDoc() || isShopOwner(shopId);
+      allow read: if isAdmin()
+        || isShopManager(shopId)
+        || isStaff(shopId)
+        || isShopOwnerDoc()
+        || isShopOwner(shopId)
+        || signedIn();
       allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
 
       match /managers/{uid} {
@@ -45,52 +121,76 @@ service cloud.firestore {
       }
 
       match /employees/{employeeId} {
-        allow read: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId) || (isStaff(shopId) && isOwnEmployee(employeeId));
+        allow read: if isAdmin()
+          || isShopManager(shopId)
+          || isShopOwner(shopId)
+          || isOwnEmployeeByAuthUid()
+          || (isStaff(shopId) && isOwnEmployee(employeeId))
+          || signedIn();
         allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /attendance/{attendanceId} {
-        allow read: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId)
-          || (isStaff(shopId) && resource.data.employeeId == request.auth.token.employeeId);
-        allow create, update: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId)
-          || (
-            request.resource.data.shopId == shopId
-            && (isStaff(shopId) && request.resource.data.employeeId == request.auth.token.employeeId)
-          );
+        allow read: if signedIn();
+
+        allow create: if signedIn();
+
+        allow update: if signedIn();
+
         allow delete: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /salary/{salaryId} {
-        allow read: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId)
-          || (isStaff(shopId) && resource.data.employeeId == request.auth.token.employeeId);
+        allow read: if isAdmin()
+          || isShopManager(shopId)
+          || isShopOwner(shopId)
+          || (isStaff(shopId) && isOwnSalaryByDocId(salaryId))
+          || (resource != null && isOwnEmployeeDocByRef(shopId, resource.data.employeeId));
         allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /advances/{advanceId} {
-        allow read: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId)
-          || (isStaff(shopId) && resource.data.employeeId == request.auth.token.employeeId);
+        allow read: if isAdmin()
+          || isShopManager(shopId)
+          || isShopOwner(shopId)
+          || (resource != null && isOwnEmployeeDocByRef(shopId, resource.data.employeeId))
+          || (isStaff(shopId) && resource != null && resource.data.employeeId == request.auth.token.employeeId);
         allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /shifts/{shiftId} {
-        allow read: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId) || isStaff(shopId);
+        allow read: if signedIn();
+        allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
+      }
+
+      match /holidays/{holidayId} {
+        allow read: if signedIn();
+        allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
+      }
+
+      match /leaves/{leaveId} {
+        allow read: if signedIn();
+        allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
+      }
+
+      match /shift_history/{historyId} {
+        allow read: if isAdmin()
+          || isShopManager(shopId)
+          || isShopOwner(shopId)
+          || (isStaff(shopId) && resource != null && resource.data.staffId == request.auth.token.employeeId);
         allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /weekly_shift_plans/{planId} {
-        allow read: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId)
-          || (isStaff(shopId) && resource.data.employeeId == request.auth.token.employeeId);
-        allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
-      }
-
-      match /staff_weekly_shifts/{planId} {
-        allow read: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId)
-          || (isStaff(shopId) && resource.data.staff_id == request.auth.token.employeeId);
+        allow read: if isAdmin()
+          || isShopManager(shopId)
+          || isShopOwner(shopId)
+          || isOwnWeeklyShiftPlan(shopId);
         allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /settings/{settingId} {
-        allow read: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId) || isStaff(shopId);
+        allow read: if signedIn();
         allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
     }

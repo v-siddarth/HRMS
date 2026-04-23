@@ -4,11 +4,14 @@ import { Card, Field, PrimaryButton, Screen } from '../../components/ui';
 import { useAppSelector } from '../../store/hooks';
 import {
   useGetBiometricSettingsQuery,
+  useGetGeoFencingSettingsQuery,
   useGetPayrollSettingsQuery,
   useUpsertBiometricSettingsMutation,
+  useUpsertGeoFencingSettingsMutation,
   useUpsertPayrollSettingsMutation,
 } from '../../store/hrmsApi';
 import { colors } from '../../theme/colors';
+import { getCurrentDeviceLocation, validateShopLocationConfig } from '../../utils/geofencing';
 
 export function ShopSettingsScreen() {
   const user = useAppSelector(state => state.auth.user);
@@ -18,6 +21,8 @@ export function ShopSettingsScreen() {
   const [saveSettings, { isLoading: saving }] = useUpsertPayrollSettingsMutation();
   const { data: biometric } = useGetBiometricSettingsQuery(shopId, { skip: !shopId });
   const [saveBiometric, { isLoading: savingBiometric }] = useUpsertBiometricSettingsMutation();
+  const { data: geoFencing } = useGetGeoFencingSettingsQuery(shopId, { skip: !shopId });
+  const [saveGeoFencing, { isLoading: savingGeoFencing }] = useUpsertGeoFencingSettingsMutation();
 
   const [timezone, setTimezone] = useState('Asia/Kolkata');
   const [lateThreshold, setLateThreshold] = useState('3');
@@ -27,6 +32,14 @@ export function ShopSettingsScreen() {
   const [biometricDeviceId, setBiometricDeviceId] = useState('');
   const [syncWindowMinutes, setSyncWindowMinutes] = useState('5');
   const [integrationMode, setIntegrationMode] = useState<'api' | 'pull_agent'>('pull_agent');
+  const [geoEnabled, setGeoEnabled] = useState(false);
+  const [geoLatitude, setGeoLatitude] = useState('');
+  const [geoLongitude, setGeoLongitude] = useState('');
+  const [geoRadius, setGeoRadius] = useState('100');
+  const [accuracyBufferMeters, setAccuracyBufferMeters] = useState('20');
+  const [requireGpsAccuracyMeters, setRequireGpsAccuracyMeters] = useState('100');
+  const [allowAttendanceWhenLocationMissing, setAllowAttendanceWhenLocationMissing] = useState(true);
+  const [capturingLocation, setCapturingLocation] = useState(false);
 
   useEffect(() => {
     if (!settings) {
@@ -47,6 +60,19 @@ export function ShopSettingsScreen() {
     setSyncWindowMinutes(String(biometric.syncWindowMinutes));
     setIntegrationMode(biometric.integrationMode);
   }, [biometric]);
+
+  useEffect(() => {
+    if (!geoFencing) {
+      return;
+    }
+    setGeoEnabled(geoFencing.enabled);
+    setGeoLatitude(geoFencing.location ? String(geoFencing.location.latitude) : '');
+    setGeoLongitude(geoFencing.location ? String(geoFencing.location.longitude) : '');
+    setGeoRadius(geoFencing.location ? String(geoFencing.location.radius) : '100');
+    setAccuracyBufferMeters(String(geoFencing.accuracyBufferMeters));
+    setRequireGpsAccuracyMeters(String(geoFencing.requireGpsAccuracyMeters ?? 100));
+    setAllowAttendanceWhenLocationMissing(geoFencing.allowAttendanceWhenLocationMissing);
+  }, [geoFencing]);
 
   const onSave = async () => {
     if (!shopId) {
@@ -110,6 +136,78 @@ export function ShopSettingsScreen() {
     } catch (error) {
       Alert.alert('Save failed', (error as Error).message);
     }
+  };
+
+  const onUseCurrentLocation = async () => {
+    setCapturingLocation(true);
+    try {
+      const currentLocation = await getCurrentDeviceLocation();
+      setGeoLatitude(String(currentLocation.latitude));
+      setGeoLongitude(String(currentLocation.longitude));
+      Alert.alert('Location Captured', 'Current device location was added to the shop location fields.');
+    } catch (error) {
+      Alert.alert('Location Error', (error as Error).message);
+    } finally {
+      setCapturingLocation(false);
+    }
+  };
+
+  const onSaveGeoFencing = async () => {
+    if (!shopId) {
+      Alert.alert('Error', 'Shop not linked to this account.');
+      return;
+    }
+
+    const latitude = Number(geoLatitude);
+    const longitude = Number(geoLongitude);
+    const radius = Number(geoRadius);
+    const buffer = Number(accuracyBufferMeters);
+    const requiredAccuracy = Number(requireGpsAccuracyMeters);
+
+    const validation = validateShopLocationConfig({
+      shopId,
+      latitude,
+      longitude,
+      radius,
+    });
+    if (!validation.ok) {
+      Alert.alert('Validation', validation.message);
+      return;
+    }
+    if (Number.isNaN(buffer) || buffer < 0) {
+      Alert.alert('Validation', 'Accuracy buffer must be 0 or more.');
+      return;
+    }
+    if (Number.isNaN(requiredAccuracy) || requiredAccuracy < 0) {
+      Alert.alert('Validation', 'Required GPS accuracy must be 0 or more.');
+      return;
+    }
+
+    try {
+      await saveGeoFencing({
+        shopId,
+        latitude,
+        longitude,
+        radius,
+        enabled: geoEnabled,
+        accuracyBufferMeters: buffer,
+        allowAttendanceWhenLocationMissing,
+        requireGpsAccuracyMeters: requiredAccuracy,
+      }).unwrap();
+      Alert.alert('Saved', 'Geo-fencing settings updated successfully.');
+    } catch (error) {
+      Alert.alert('Save failed', (error as Error).message);
+    }
+  };
+
+  const onResetGeoDefaults = () => {
+    setGeoEnabled(false);
+    setGeoLatitude('');
+    setGeoLongitude('');
+    setGeoRadius('100');
+    setAccuracyBufferMeters('20');
+    setRequireGpsAccuracyMeters('100');
+    setAllowAttendanceWhenLocationMissing(true);
   };
 
   return (
@@ -189,8 +287,116 @@ export function ShopSettingsScreen() {
           <Field label="Last Synced At" value={biometric?.lastSyncedAt ?? '-'} editable={false} />
           <PrimaryButton title="Save Biometric Settings" onPress={onSaveBiometric} loading={savingBiometric} />
         </Card>
+
+        <Card>
+          <Text style={styles.sectionTitle}>Geo-Fencing Attendance</Text>
+          <Text style={styles.helperText}>
+            Register the shop location and allowed radius so staff check-in works only from the approved area.
+          </Text>
+
+          <View style={styles.infoGrid}>
+            <InfoPill label="Status" value={geoEnabled ? 'Enabled' : 'Disabled'} warning={!geoEnabled} />
+            <InfoPill
+              label="Configured Radius"
+              value={geoFencing?.location ? `${Number(geoFencing.location.radius).toFixed(0)} m` : 'Not Set'}
+            />
+            <InfoPill
+              label="Accuracy Buffer"
+              value={`${Number(geoFencing?.accuracyBufferMeters ?? 20).toFixed(0)} m`}
+            />
+            <InfoPill
+              label="Missing Location"
+              value={allowAttendanceWhenLocationMissing ? 'Allow' : 'Block'}
+              warning={!allowAttendanceWhenLocationMissing}
+            />
+          </View>
+
+          <Text style={styles.chipLabel}>Geo-Fencing</Text>
+          <View style={styles.chipRow}>
+            <Pressable
+              style={[styles.chip, geoEnabled ? styles.chipActive : undefined]}
+              onPress={() => setGeoEnabled(true)}>
+              <Text style={[styles.chipText, geoEnabled ? styles.chipTextActive : undefined]}>Enabled</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.chip, !geoEnabled ? styles.chipActive : undefined]}
+              onPress={() => setGeoEnabled(false)}>
+              <Text style={[styles.chipText, !geoEnabled ? styles.chipTextActive : undefined]}>Disabled</Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.chipLabel}>If Shop Location Is Missing</Text>
+          <View style={styles.chipRow}>
+            <Pressable
+              style={[styles.chip, allowAttendanceWhenLocationMissing ? styles.chipActive : undefined]}
+              onPress={() => setAllowAttendanceWhenLocationMissing(true)}>
+              <Text style={[styles.chipText, allowAttendanceWhenLocationMissing ? styles.chipTextActive : undefined]}>
+                Allow Check-In
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.chip, !allowAttendanceWhenLocationMissing ? styles.chipActive : undefined]}
+              onPress={() => setAllowAttendanceWhenLocationMissing(false)}>
+              <Text style={[styles.chipText, !allowAttendanceWhenLocationMissing ? styles.chipTextActive : undefined]}>
+                Block Check-In
+              </Text>
+            </Pressable>
+          </View>
+
+          <Field
+            label="Shop Latitude"
+            value={geoLatitude}
+            onChangeText={setGeoLatitude}
+            keyboardType="numeric"
+            placeholder="e.g. 18.5204"
+          />
+          <Field
+            label="Shop Longitude"
+            value={geoLongitude}
+            onChangeText={setGeoLongitude}
+            keyboardType="numeric"
+            placeholder="e.g. 73.8567"
+          />
+          <Field
+            label="Allowed Radius (meters)"
+            value={geoRadius}
+            onChangeText={setGeoRadius}
+            keyboardType="numeric"
+            placeholder="e.g. 100"
+          />
+          <Field
+            label="GPS Accuracy Buffer (meters)"
+            value={accuracyBufferMeters}
+            onChangeText={setAccuracyBufferMeters}
+            keyboardType="numeric"
+            placeholder="e.g. 20"
+          />
+          <Field
+            label="Required GPS Accuracy (meters)"
+            value={requireGpsAccuracyMeters}
+            onChangeText={setRequireGpsAccuracyMeters}
+            keyboardType="numeric"
+            placeholder="e.g. 100"
+          />
+          <PrimaryButton
+            title={capturingLocation ? 'Capturing Location...' : 'Use Current Device Location'}
+            onPress={onUseCurrentLocation}
+            loading={capturingLocation}
+          />
+          <PrimaryButton title="Save Geo-Fencing Settings" onPress={onSaveGeoFencing} loading={savingGeoFencing} />
+          <PrimaryButton title="Reset Geo Defaults" onPress={onResetGeoDefaults} />
+        </Card>
       </ScrollView>
     </Screen>
+  );
+}
+
+function InfoPill({ label, value, warning }: { label: string; value: string; warning?: boolean }) {
+  return (
+    <View style={[styles.infoPill, warning ? styles.infoPillWarning : undefined]}>
+      <Text style={styles.infoPillLabel}>{label}</Text>
+      <Text style={styles.infoPillValue}>{value}</Text>
+    </View>
   );
 }
 
@@ -257,5 +463,35 @@ const styles = StyleSheet.create({
   },
   chipTextActive: {
     color: '#0a7a5b',
+  },
+  infoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  infoPill: {
+    minWidth: '47%',
+    flexGrow: 1,
+    borderWidth: 1,
+    borderColor: '#d8e2ed',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#f8fbff',
+    gap: 4,
+  },
+  infoPillWarning: {
+    backgroundColor: '#fff7e8',
+    borderColor: '#f2d2a3',
+  },
+  infoPillLabel: {
+    color: colors.textSecondary,
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  infoPillValue: {
+    color: colors.textPrimary,
+    fontWeight: '800',
+    fontSize: 14,
   },
 });

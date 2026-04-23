@@ -3,9 +3,39 @@ export type UserRole = 'super_admin' | 'shop_manager' | 'staff';
 export type ShopStatus = 'active' | 'inactive';
 export type EmployeeStatus = 'active' | 'inactive';
 export type EmployeeAuthStatus = 'not_created' | 'pending' | 'provisioned' | 'disabled' | 'error';
-export type AttendanceStatus = 'present' | 'absent' | 'late' | 'half_day' | 'leave';
+export type AttendanceStatus = 'present' | 'absent' | 'late' | 'half_day' | 'leave' | 'holiday' | 'week_off';
 export type AttendanceSource = 'manual' | 'biometric';
 export type WeeklyOffDay = 'none' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
+export type LeaveType = 'paid' | 'unpaid' | 'sick' | 'casual';
+export type LeaveStatus = 'pending' | 'approved' | 'rejected';
+export type HolidayType = 'paid' | 'unpaid';
+export type ShiftAssignmentMode = 'fixed' | 'dynamic' | 'rotational';
+
+export interface ShiftRotationWeek {
+  weekIndex: number;
+  shiftId: string | null;
+  isOff?: boolean;
+}
+
+export interface ShiftOverride {
+  date: string;
+  shiftId: string | null;
+  isOff: boolean;
+  note?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MonthlyWeekOffRule {
+  weekOrdinal: 1 | 2 | 3 | 4 | 5 | -1;
+  dayOfWeek: Exclude<WeeklyOffDay, 'none'>;
+}
+
+export interface WeeklyOffConfig {
+  daysOfWeek: Exclude<WeeklyOffDay, 'none'>[];
+  monthlyRules?: MonthlyWeekOffRule[];
+  allowAttendanceOnOffDay?: boolean;
+}
 
 export interface AuthUser {
   uid: string;
@@ -54,12 +84,17 @@ export interface Employee {
   designation: string;
   joiningDate: string;
   aadhaarNo?: string;
-  salaryType: 'monthly';
+  salaryType: 'monthly' | 'daily';
   basicSalary: number;
   pfAmount?: number;
   overtimeRatePerHour: number;
   defaultShiftId?: string;
+  shiftMode?: ShiftAssignmentMode;
+  rotationStartDate?: string;
+  rotationPattern?: ShiftRotationWeek[];
+  shiftOverrides?: ShiftOverride[];
   weeklyOff?: WeeklyOffDay;
+  weeklyOffConfig?: WeeklyOffConfig;
   biometricUserId?: string;
   biometricConsent?: boolean;
   biometricRegisteredAt?: string;
@@ -138,6 +173,31 @@ export interface EmployeeAdvance {
   updatedAt: string;
 }
 
+export interface LeaveRequest {
+  id: string;
+  shopId: string;
+  staffId: string;
+  startDate: string;
+  endDate: string;
+  leaveType: LeaveType;
+  reason: string;
+  status: LeaveStatus;
+  createdAt: string;
+  updatedAt: string;
+  decidedAt?: string;
+  decidedBy?: string;
+}
+
+export interface HolidayCalendarEntry {
+  id: string;
+  shopId: string;
+  name: string;
+  date: string;
+  type: HolidayType;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ShiftMaster {
   id: string;
   shopId: string;
@@ -180,6 +240,21 @@ export interface StaffWeeklyShiftDay {
   updatedAt: string;
 }
 
+export interface ShiftHistoryEntry {
+  id: string;
+  shopId: string;
+  staffId: string;
+  date: string;
+  mode: ShiftAssignmentMode;
+  oldShiftId: string | null;
+  newShiftId: string | null;
+  oldIsOff: boolean;
+  newIsOff: boolean;
+  changedBy: string;
+  note?: string;
+  createdAt: string;
+}
+
 export interface PayrollSettings {
   lateThreshold: number;
   lateDeductionDays: number;
@@ -193,4 +268,21 @@ export interface BiometricSettings {
   syncWindowMinutes: number;
   lastSyncedAt?: string;
   integrationMode: 'api' | 'pull_agent';
+}
+
+export interface ShopLocationConfig {
+  id: string;
+  shopId: string;
+  latitude: number;
+  longitude: number;
+  radius: number;
+  updatedAt: string;
+}
+
+export interface GeoFencingSettings {
+  enabled: boolean;
+  location: ShopLocationConfig | null;
+  accuracyBufferMeters: number;
+  allowAttendanceWhenLocationMissing: boolean;
+  requireGpsAccuracyMeters?: number;
 }

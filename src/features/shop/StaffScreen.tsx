@@ -20,21 +20,23 @@ import { Card, Field, PrimaryButton } from '../../components/ui';
 import { createStaffAuthUserLocally, deleteStaffAuthUserLocally } from '../../services/authService';
 import { useAppSelector } from '../../store/hooks';
 import {
+  useBulkAssignShiftPlanMutation,
+  useCloneShiftTemplateMutation,
   useCreateShiftTemplateMutation,
   useDeleteShiftTemplateMutation,
   useDeleteEmployeeMutation,
   useGetEmployeesQuery,
   useGetShopByIdQuery,
+  useSaveAdvancedShiftPlanMutation,
   useGetShiftsQuery,
   useGetShiftTemplatesQuery,
   useGetStaffWeeklyShiftPlanByStaffQuery,
   useUpsertEmployeeMutation,
-  useSaveStaffWeeklyShiftPlanV2Mutation,
   useUpdateShiftTemplateMutation,
 } from '../../store/hrmsApi';
 import { formatDisplayDate, todayDate } from '../../utils/date';
 import { colors } from '../../theme/colors';
-import type { Employee, EmployeeAuthStatus, EmployeeStatus, ShiftTemplate, StaffWeeklyShiftDay, WeeklyOffDay } from '../../types/models';
+import type { Employee, EmployeeAuthStatus, EmployeeStatus, ShiftAssignmentMode, ShiftTemplate, StaffWeeklyShiftDay, WeeklyOffDay } from '../../types/models';
 
 type StaffStackParamList = {
   StaffList: undefined;
@@ -413,6 +415,15 @@ function WeeklyShiftPlannerScreen({ navigation }: { navigation: any }) {
   const insets = useSafeAreaInsets();
   const [selectedStaffId, setSelectedStaffId] = useState('');
   const [draftDays, setDraftDays] = useState<StaffWeeklyShiftDay[]>(() => buildEmptyWeeklyPlan('', ''));
+  const [selectedMode, setSelectedMode] = useState<ShiftAssignmentMode>('dynamic');
+  const [fixedShiftId, setFixedShiftId] = useState('');
+  const [rotationStartDate, setRotationStartDate] = useState(todayDate());
+  const [rotationPattern, setRotationPattern] = useState([
+    { weekIndex: 0, shiftId: '', isOff: false },
+    { weekIndex: 1, shiftId: '', isOff: false },
+    { weekIndex: 2, shiftId: '', isOff: false },
+  ]);
+  const [bulkStaffIds, setBulkStaffIds] = useState<string[]>([]);
   const [savingPlan, setSavingPlan] = useState(false);
   const { data: employees = [] } = useGetEmployeesQuery(shopId, { skip: !shopId });
   const { data: shiftTemplates = [] } = useGetShiftTemplatesQuery(shopId, { skip: !shopId });
@@ -425,7 +436,8 @@ function WeeklyShiftPlannerScreen({ navigation }: { navigation: any }) {
     { shopId, staffId: selectedStaffId },
     { skip: !shopId || !selectedStaffId },
   );
-  const [saveWeeklyPlan] = useSaveStaffWeeklyShiftPlanV2Mutation();
+  const [saveAdvancedPlan] = useSaveAdvancedShiftPlanMutation();
+  const [bulkAssignPlan] = useBulkAssignShiftPlanMutation();
   const shiftById = useMemo(() => new Map(shiftTemplates.map(shift => [shift.id, shift])), [shiftTemplates]);
   const savedDays = savedDaysResponse ?? EMPTY_WEEKLY_SHIFT_DAYS;
 
@@ -444,6 +456,38 @@ function WeeklyShiftPlannerScreen({ navigation }: { navigation: any }) {
 
     setDraftDays(current => (areWeeklyPlanDaysEqual(current, nextDraftDays) ? current : nextDraftDays));
   }, [savedDays, selectedStaffId, shopId]);
+
+  useEffect(() => {
+    if (!selectedEmployee) {
+      setSelectedMode('dynamic');
+      setFixedShiftId('');
+      setRotationStartDate(todayDate());
+      setRotationPattern([
+        { weekIndex: 0, shiftId: '', isOff: false },
+        { weekIndex: 1, shiftId: '', isOff: false },
+        { weekIndex: 2, shiftId: '', isOff: false },
+      ]);
+      return;
+    }
+
+    setSelectedMode(selectedEmployee.shiftMode ?? (selectedEmployee.defaultShiftId ? 'fixed' : 'dynamic'));
+    setFixedShiftId(selectedEmployee.defaultShiftId ?? '');
+    setRotationStartDate(selectedEmployee.rotationStartDate || selectedEmployee.joiningDate || todayDate());
+    setRotationPattern(
+      selectedEmployee.rotationPattern?.length
+        ? selectedEmployee.rotationPattern.map(item => ({
+            weekIndex: item.weekIndex,
+            shiftId: item.shiftId ?? '',
+            isOff: Boolean(item.isOff),
+          }))
+        : [
+            { weekIndex: 0, shiftId: '', isOff: false },
+            { weekIndex: 1, shiftId: '', isOff: false },
+            { weekIndex: 2, shiftId: '', isOff: false },
+          ],
+    );
+    setBulkStaffIds(current => (selectedEmployee && !current.includes(selectedEmployee.id) ? [selectedEmployee.id] : current));
+  }, [selectedEmployee]);
 
   const workingDayCount = useMemo(() => draftDays.filter(item => !item.isOff && item.shiftId).length, [draftDays]);
   const offDayCount = useMemo(() => draftDays.filter(item => item.isOff).length, [draftDays]);
@@ -470,38 +514,116 @@ function WeeklyShiftPlannerScreen({ navigation }: { navigation: any }) {
     }));
   };
 
+  const toggleBulkStaff = (staffId: string) => {
+    setBulkStaffIds(current => (current.includes(staffId) ? current.filter(item => item !== staffId) : [...current, staffId]));
+  };
+
+  const updateRotationWeek = (weekIndex: number, next: { shiftId?: string; isOff?: boolean }) => {
+    setRotationPattern(current =>
+      current.map(item =>
+        item.weekIndex === weekIndex
+          ? {
+              ...item,
+              shiftId: next.isOff ? '' : next.shiftId ?? item.shiftId,
+              isOff: next.isOff ?? item.isOff,
+            }
+          : item,
+      ),
+    );
+  };
+
+  const buildPlanPayload = () => {
+    if (selectedMode === 'fixed') {
+      if (!fixedShiftId) {
+        throw new Error('Select a fixed shift first.');
+      }
+      return {
+        mode: 'fixed' as const,
+        fixedShiftId,
+        days: plannerDays.map(day => ({
+          dayOfWeek: day.dayOfWeek,
+          shiftId: fixedShiftId,
+          isOff: false,
+        })),
+      };
+    }
+
+    if (selectedMode === 'rotational') {
+      const hasAnyRotationWeek = rotationPattern.some(item => item.isOff || item.shiftId);
+      if (!hasAnyRotationWeek) {
+        throw new Error('Define at least one rotational week.');
+      }
+      return {
+        mode: 'rotational' as const,
+        rotationStartDate,
+        rotationPattern: rotationPattern.map(item => ({
+          weekIndex: item.weekIndex,
+          shiftId: item.isOff ? null : item.shiftId || null,
+          isOff: item.isOff,
+        })),
+        days: draftDays.map(item => ({
+          dayOfWeek: item.dayOfWeek,
+          shiftId: item.shiftId,
+          isOff: item.isOff,
+        })),
+      };
+    }
+
+    const hasWorkingDay = draftDays.some(item => !item.isOff && item.shiftId);
+    if (!hasWorkingDay) {
+      throw new Error('Assign at least one working day before saving.');
+    }
+    if (draftDays.some(item => !item.isOff && !item.shiftId)) {
+      throw new Error('Each day must have a shift assigned or be marked as off.');
+    }
+    return {
+      mode: 'dynamic' as const,
+      days: draftDays.map(item => ({
+        dayOfWeek: item.dayOfWeek,
+        shiftId: item.shiftId,
+        isOff: item.isOff,
+      })),
+    };
+  };
+
   const onSaveWeeklyPlan = async () => {
     if (!shopId || !selectedStaffId) {
       Alert.alert('Validation', 'Select a staff member first.');
       return;
     }
 
-    const hasWorkingDay = draftDays.some(item => !item.isOff && item.shiftId);
-    if (!hasWorkingDay) {
-      Alert.alert('Validation', 'Assign at least one working day before saving.');
-      return;
-    }
-
-    const hasIncompleteDay = draftDays.some(item => !item.isOff && !item.shiftId);
-    if (hasIncompleteDay) {
-      Alert.alert('Validation', 'Each day must have a shift assigned or be marked as off.');
-      return;
-    }
-
     try {
+      const payload = buildPlanPayload();
       setSavingPlan(true);
-      await saveWeeklyPlan({
+      await saveAdvancedPlan({
         shopId,
         staffId: selectedStaffId,
-        days: draftDays.map(item => ({
-          dayOfWeek: item.dayOfWeek,
-          shiftId: item.shiftId,
-          isOff: item.isOff,
-        })),
+        ...payload,
       }).unwrap();
       Alert.alert('Saved', 'Weekly Shift Plan Saved');
     } catch (error) {
       Alert.alert('Save failed', (error as Error).message);
+    } finally {
+      setSavingPlan(false);
+    }
+  };
+
+  const onBulkAssign = async () => {
+    if (!shopId || bulkStaffIds.length === 0) {
+      Alert.alert('Validation', 'Select at least one staff member for bulk assign.');
+      return;
+    }
+    try {
+      const payload = buildPlanPayload();
+      setSavingPlan(true);
+      await bulkAssignPlan({
+        shopId,
+        staffIds: bulkStaffIds,
+        plan: payload,
+      }).unwrap();
+      Alert.alert('Saved', `Plan applied to ${bulkStaffIds.length} staff member(s).`);
+    } catch (error) {
+      Alert.alert('Bulk assign failed', (error as Error).message);
     } finally {
       setSavingPlan(false);
     }
@@ -526,7 +648,7 @@ function WeeklyShiftPlannerScreen({ navigation }: { navigation: any }) {
 
             <Text style={styles.formTitle}>Weekly Shift Planner</Text>
             <Text style={styles.staffFormIntro}>
-              Select one staff member, then assign an existing shift or mark an off day for each weekday from Monday to Sunday.
+              Choose fixed, dynamic, or rotational scheduling, then save for one staff member or bulk assign the same plan.
             </Text>
 
             <View style={styles.staffFormHeroStats}>
@@ -552,16 +674,22 @@ function WeeklyShiftPlannerScreen({ navigation }: { navigation: any }) {
                 <Text style={styles.shiftHint}>Add active staff before creating a weekly shift plan.</Text>
               ) : (
                 activeEmployees.map(employee => (
-                  <Pressable
-                    key={employee.id}
-                    style={[styles.selectionRow, selectedStaffId === employee.id ? styles.selectionRowSelected : undefined]}
-                    onPress={() => setSelectedStaffId(employee.id)}>
-                    <Text style={[styles.selectionRowTitle, selectedStaffId === employee.id ? styles.selectionRowTitleSelected : undefined]}>
-                      {employee.employeeCode ? `${employee.employeeCode} - ` : ''}
-                      {employee.name}
-                    </Text>
-                    <Text style={styles.selectionRowMeta}>{employee.designation}</Text>
-                  </Pressable>
+                  <View key={employee.id} style={[styles.selectionRow, selectedStaffId === employee.id ? styles.selectionRowSelected : undefined]}>
+                    <Pressable style={styles.selectionRowGrow} onPress={() => setSelectedStaffId(employee.id)}>
+                      <Text style={[styles.selectionRowTitle, selectedStaffId === employee.id ? styles.selectionRowTitleSelected : undefined]}>
+                        {employee.employeeCode ? `${employee.employeeCode} - ` : ''}
+                        {employee.name}
+                      </Text>
+                      <Text style={styles.selectionRowMeta}>{employee.designation}</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.planChipSmall, bulkStaffIds.includes(employee.id) ? styles.planChipSelected : undefined]}
+                      onPress={() => toggleBulkStaff(employee.id)}>
+                      <Text style={[styles.planChipText, bulkStaffIds.includes(employee.id) ? styles.planChipTextSelected : undefined]}>
+                        Bulk
+                      </Text>
+                    </Pressable>
+                  </View>
                 ))
               )}
             </View>
@@ -571,11 +699,92 @@ function WeeklyShiftPlannerScreen({ navigation }: { navigation: any }) {
             <Card>
               <Text style={styles.shiftTitle}>Plan for {selectedEmployee.name}</Text>
               <Text style={styles.shiftHint}>
-                Each day must have a shift assignment or be marked as off. At least one working day is required.
+                Shift mode controls how attendance resolves for this staff member each day.
               </Text>
               {loadingPlan ? <Text style={styles.shiftHint}>Loading saved weekly plan...</Text> : null}
 
-              <View style={styles.modeColumn}>
+              <Text style={styles.filterTitle}>Shift Mode</Text>
+              <View style={styles.filterWrap}>
+                {(['fixed', 'dynamic', 'rotational'] as ShiftAssignmentMode[]).map(mode => (
+                  <Pressable
+                    key={mode}
+                    style={[styles.filterChip, selectedMode === mode ? styles.filterChipSelected : undefined]}
+                    onPress={() => setSelectedMode(mode)}>
+                    <Text style={[styles.filterChipText, selectedMode === mode ? styles.filterChipTextSelected : undefined]}>
+                      {mode === 'fixed' ? 'Fixed Shift' : mode === 'dynamic' ? 'Dynamic Day-wise' : 'Rotational'}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {selectedMode === 'fixed' ? (
+                <>
+                  <Text style={styles.filterTitle}>Fixed Shift</Text>
+                  <View style={styles.planWrap}>
+                    {shiftTemplates.map(shift => (
+                      <Pressable
+                        key={shift.id}
+                        style={[styles.planChip, fixedShiftId === shift.id ? styles.planChipSelected : undefined]}
+                        onPress={() => setFixedShiftId(shift.id)}>
+                        <Text style={[styles.planChipText, fixedShiftId === shift.id ? styles.planChipTextSelected : undefined]}>
+                          {shift.name}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              ) : null}
+
+              {selectedMode === 'rotational' ? (
+                <>
+                  <Field
+                    label="Rotation Start Date"
+                    value={rotationStartDate}
+                    onChangeText={setRotationStartDate}
+                    placeholder="YYYY-MM-DD"
+                  />
+                  {rotationPattern.map(week => (
+                    <View key={week.weekIndex} style={styles.modeRow}>
+                      <View style={styles.topRow}>
+                        <View style={styles.headerTextWrap}>
+                          <Text style={styles.modeRowTitle}>Week {week.weekIndex + 1}</Text>
+                          <Text style={styles.modeRowMeta}>
+                            {week.isOff
+                              ? 'Rotation marks this week as off'
+                              : week.shiftId
+                                ? shiftById.get(week.shiftId)?.name ?? week.shiftId
+                                : 'No shift selected'}
+                          </Text>
+                        </View>
+                        <Pressable
+                          style={[styles.planChipSmall, week.isOff ? styles.planChipSelected : undefined]}
+                          onPress={() => updateRotationWeek(week.weekIndex, { isOff: !week.isOff })}>
+                          <Text style={[styles.planChipText, week.isOff ? styles.planChipTextSelected : undefined]}>
+                            Off Week
+                          </Text>
+                        </Pressable>
+                      </View>
+                      {!week.isOff ? (
+                        <View style={styles.planWrap}>
+                          {shiftTemplates.map(shift => (
+                            <Pressable
+                              key={`${week.weekIndex}-${shift.id}`}
+                              style={[styles.planChip, week.shiftId === shift.id ? styles.planChipSelected : undefined]}
+                              onPress={() => updateRotationWeek(week.weekIndex, { shiftId: shift.id, isOff: false })}>
+                              <Text style={[styles.planChipText, week.shiftId === shift.id ? styles.planChipTextSelected : undefined]}>
+                                {shift.name}
+                              </Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      ) : null}
+                    </View>
+                  ))}
+                </>
+              ) : null}
+
+              {selectedMode === 'dynamic' ? (
+                <View style={styles.modeColumn}>
                 {plannerDays.map(day => {
                   const currentDay = draftDays.find(item => item.dayOfWeek === day.dayOfWeek) ?? buildPlannerDay(shopId, selectedStaffId, day.dayOfWeek);
                   const selectedShift = currentDay.shiftId ? shiftById.get(currentDay.shiftId) ?? null : null;
@@ -621,18 +830,28 @@ function WeeklyShiftPlannerScreen({ navigation }: { navigation: any }) {
                     </View>
                   );
                 })}
-              </View>
+                </View>
+              ) : null}
 
               <PrimaryButton title={savingPlan ? 'Saving...' : 'Save Weekly Plan'} onPress={onSaveWeeklyPlan} loading={savingPlan} />
+              <View style={styles.shiftBtnRow}>
+                <View style={styles.shiftBtn}>
+                  <PrimaryButton
+                    title={savingPlan ? 'Applying...' : `Bulk Assign (${bulkStaffIds.length})`}
+                    onPress={onBulkAssign}
+                    loading={savingPlan}
+                  />
+                </View>
+              </View>
               <Text style={styles.shiftHint}>{`${workingDayCount} working day(s) and ${offDayCount} off day(s) selected.`}</Text>
             </Card>
           ) : null}
 
           <Card>
             <Text style={styles.reportTitle}>Planner Rules</Text>
-            <Text style={styles.policyText}>1. Weekly Shift Planner does not create shifts.</Text>
-            <Text style={styles.policyText}>2. Only existing shift templates can be assigned.</Text>
-            <Text style={styles.policyText}>3. Off days are stored separately from shift assignments.</Text>
+            <Text style={styles.policyText}>1. Fixed mode applies one shift across the week.</Text>
+            <Text style={styles.policyText}>2. Dynamic mode supports different shifts per day, including off days.</Text>
+            <Text style={styles.policyText}>3. Rotational mode cycles week-wise from the saved pattern and start date.</Text>
           </Card>
         </View>
       </ScrollView>
@@ -1217,6 +1436,7 @@ function StaffShiftScreen({ navigation }: { navigation: any }) {
   const { data: shiftTemplates = [], isLoading } = useGetShiftTemplatesQuery(shopId, { skip: !shopId });
   const [createShiftTemplate] = useCreateShiftTemplateMutation();
   const [updateShiftTemplate] = useUpdateShiftTemplateMutation();
+  const [cloneShiftTemplate] = useCloneShiftTemplateMutation();
   const [deleteShiftTemplate] = useDeleteShiftTemplateMutation();
 
   const resetShiftForm = () => {
@@ -1320,6 +1540,18 @@ function StaffShiftScreen({ navigation }: { navigation: any }) {
         },
       },
     ]);
+  };
+
+  const onCloneShift = async (shift: ShiftTemplate) => {
+    if (!shopId) {
+      return;
+    }
+    try {
+      const cloned = await cloneShiftTemplate({ shopId, shiftId: shift.id }).unwrap();
+      Alert.alert('Cloned', `${cloned.name} created successfully.`);
+    } catch (error) {
+      Alert.alert('Clone failed', (error as Error).message);
+    }
   };
 
   const onShiftStartChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
@@ -1539,6 +1771,9 @@ function StaffShiftScreen({ navigation }: { navigation: any }) {
                       {`Dur ${item.durationHours}h | Grace ${item.graceTime}m | Late ${item.lateRuleMinutes}m | Half ${item.halfDayHours}h`}
                     </Text>
                     <View style={styles.shiftColActions}>
+                      <Pressable style={styles.shiftIconBtn} onPress={() => onCloneShift(item)}>
+                        <Ionicons name="copy-outline" size={18} color="#0f766e" />
+                      </Pressable>
                       <Pressable style={styles.shiftIconBtn} onPress={() => onEditShift(item)}>
                         <Ionicons name="create-outline" size={18} color="#3554a5" />
                       </Pressable>
@@ -2678,12 +2913,18 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   selectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     borderWidth: 1,
     borderColor: '#d1d9e4',
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
     backgroundColor: '#ffffff',
+  },
+  selectionRowGrow: {
+    flex: 1,
   },
   selectionRowSelected: {
     borderColor: '#a7dfca',

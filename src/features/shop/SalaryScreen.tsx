@@ -1444,6 +1444,8 @@ function MonthlyAttendanceReportScreen({ navigation }: { navigation: any }) {
         late: 0,
         half_day: 0,
         leave: 0,
+        holiday: 0,
+        week_off: 0,
       },
     );
   }, [rows]);
@@ -1732,6 +1734,12 @@ function attendanceStatusLabel(status: AttendanceStatus) {
   }
   if (status === 'leave') {
     return 'Leave';
+  }
+  if (status === 'holiday') {
+    return 'Holiday';
+  }
+  if (status === 'week_off') {
+    return 'Week Off';
   }
   return status.charAt(0).toUpperCase() + status.slice(1);
 }

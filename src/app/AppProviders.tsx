@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Provider } from 'react-redux';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { store } from '../store';
@@ -8,6 +8,7 @@ import { hrmsApi } from '../store/hrmsApi';
 import {
   getHydratedAuthUser,
   getLocalAdminSession,
+  getLocalShopSession,
   subscribeAuthState,
 } from '../services/authService';
 import { logError, logInfo } from '../utils/logger';
@@ -32,6 +33,7 @@ function isHandledBootstrapNetworkError(error: unknown) {
 
 function Bootstrapper() {
   const dispatch = useAppDispatch();
+  const hasResolvedInitialAuthState = useRef(false);
 
   useEffect(() => {
     const hydrateSession = async (user: Parameters<Parameters<typeof subscribeAuthState>[0]>[0]) => {
@@ -42,6 +44,17 @@ function Bootstrapper() {
             dispatch(setUser(localAdmin));
             return;
           }
+
+          const localShop = await getLocalShopSession();
+          if (localShop) {
+            dispatch(setUser(localShop));
+            return;
+          }
+
+          if (!hasResolvedInitialAuthState.current) {
+            return;
+          }
+
           dispatch(hrmsApi.util.resetApiState());
           dispatch(clearSession());
           return;
@@ -49,6 +62,12 @@ function Bootstrapper() {
 
         const hydrated = await getHydratedAuthUser();
         if (!hydrated) {
+          const localShop = await getLocalShopSession();
+          if (localShop) {
+            dispatch(setUser(localShop));
+            return;
+          }
+
           dispatch(hrmsApi.util.resetApiState());
           dispatch(clearSession());
           return;
@@ -69,6 +88,7 @@ function Bootstrapper() {
         dispatch(hrmsApi.util.resetApiState());
         dispatch(clearSession());
       } finally {
+        hasResolvedInitialAuthState.current = true;
         dispatch(setBootstrapping(false));
       }
     };

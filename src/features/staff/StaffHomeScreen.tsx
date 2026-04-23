@@ -318,6 +318,27 @@ function toWeeklyDay(value: dayjs.Dayjs): WeeklyOffDay {
 function resolveTodayStatus(record: AttendanceRecord | null, shift: ShiftMaster | null, weeklyOff: WeeklyOffDay) {
   const todayKey = toWeeklyDay(dayjs());
   const isWeeklyOff = weeklyOff !== 'none' && weeklyOff === todayKey;
+  if (record?.status === 'holiday') {
+    return {
+      label: 'Holiday',
+      summary: 'Today is marked as a holiday, so attendance actions are blocked.',
+      tone: 'warning' as const,
+    };
+  }
+  if (record?.status === 'leave') {
+    return {
+      label: 'Leave',
+      summary: 'Approved leave exists for today, so attendance actions stay blocked.',
+      tone: 'warning' as const,
+    };
+  }
+  if (record?.status === 'week_off') {
+    return {
+      label: 'Week Off',
+      summary: 'Today is resolved as a weekly off day. No salary deduction should apply.',
+      tone: 'warning' as const,
+    };
+  }
   if (!shift && isWeeklyOff) {
     return {
       label: 'Weekly Off',
@@ -381,6 +402,15 @@ function buildSmartStates({
       subtitle: `${shift.name} is scheduled for ${shift.startTime} to ${shift.endTime}.`,
       icon: 'time-outline',
       tone: 'info',
+    });
+  }
+
+  if (record?.status === 'holiday' || record?.status === 'leave' || record?.status === 'week_off') {
+    items.push({
+      title: 'Attendance blocked by calendar',
+      subtitle: `Today resolves as ${record.status.replace('_', ' ')} before punch actions are considered.`,
+      icon: 'calendar-outline',
+      tone: 'warning',
     });
   }
 

@@ -79,7 +79,7 @@ export function ReportsScreen() {
           acc[item.status] += 1;
           return acc;
         },
-        { present: 0, absent: 0, late: 0, half_day: 0, leave: 0 },
+        { present: 0, absent: 0, late: 0, half_day: 0, leave: 0, holiday: 0, week_off: 0 },
       ),
     [attendance],
   );

@@ -6,6 +6,7 @@ import { clearSession } from '../../store/authSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { hrmsApi } from '../../store/hrmsApi';
 import { colors } from '../../theme/colors';
+import { wp, hp, sp } from '../../utils/responsive';
 
 export function AdminProfileScreen() {
   const user = useAppSelector(state => state.auth.user);
@@ -66,83 +67,33 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  content: {
-    gap: 12,
-    paddingBottom: 20,
-  },
+  content: { gap: hp(12), paddingBottom: hp(20) },
   hero: {
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#d7e5fb',
-    backgroundColor: '#f4f8ff',
-    paddingVertical: 18,
-    paddingHorizontal: 14,
-    alignItems: 'center',
-    gap: 6,
+    borderRadius: wp(20), borderWidth: 1, borderColor: '#d7e5fb',
+    backgroundColor: '#f4f8ff', paddingVertical: hp(18), paddingHorizontal: wp(14),
+    alignItems: 'center', gap: hp(6),
   },
   avatarCircle: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: '#dbe9fb',
+    width: wp(68), height: wp(68), borderRadius: wp(34),
+    backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 3, borderColor: '#dbe9fb',
   },
-  avatarText: {
-    color: '#fff',
-    fontSize: 28,
-    fontWeight: '800',
-  },
-  title: {
-    fontSize: 25,
-    fontWeight: '800',
-    color: colors.textPrimary,
-    marginTop: 2,
-  },
+  avatarText: { color: '#fff', fontSize: sp(28), fontWeight: '800' },
+  title: { fontSize: sp(25), fontWeight: '800', color: colors.textPrimary, marginTop: hp(2) },
   subtitle: {
-    color: colors.textSecondary,
-    fontWeight: '500',
-    textAlign: 'center',
-    lineHeight: 20,
+    color: colors.textSecondary, fontWeight: '500', textAlign: 'center',
+    lineHeight: sp(20), fontSize: sp(14),
   },
-  sectionTitle: {
-    color: colors.textPrimary,
-    fontWeight: '800',
-    fontSize: 16,
-    marginBottom: 4,
-  },
+  sectionTitle: { color: colors.textPrimary, fontWeight: '800', fontSize: sp(16), marginBottom: hp(4) },
   infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e6ebf2',
-    paddingVertical: 8,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
+    gap: wp(10), borderBottomWidth: 1, borderBottomColor: '#e6ebf2', paddingVertical: hp(8),
   },
-  infoLabel: {
-    width: 68,
-    color: colors.textMuted,
-    fontWeight: '700',
-    fontSize: 12,
-    paddingTop: 2,
-  },
+  infoLabel: { minWidth: wp(68), color: colors.textMuted, fontWeight: '700', fontSize: sp(12), paddingTop: hp(2) },
   infoValue: {
-    flex: 1,
-    textAlign: 'right',
-    color: colors.textPrimary,
-    fontWeight: '800',
-    fontSize: 13,
-    lineHeight: 18,
+    flex: 1, textAlign: 'right', color: colors.textPrimary,
+    fontWeight: '800', fontSize: sp(13), lineHeight: sp(18),
   },
-  note: {
-    color: colors.textSecondary,
-    lineHeight: 20,
-    fontWeight: '500',
-  },
-  logoutWrap: {
-    marginTop: 4,
-  },
+  note: { color: colors.textSecondary, lineHeight: sp(20), fontWeight: '500', fontSize: sp(14) },
+  logoutWrap: { marginTop: hp(4) },
 });

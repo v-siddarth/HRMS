@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "hrms-a391a"
-  }
+    "default": "rvm-attend"
+  },
+  "targets": {},
+  "etags": {}
 }
