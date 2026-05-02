@@ -85,6 +85,28 @@ firebase use --add
 
 Then select the new project and make it the default for this repo.
 
+## 3A. Fix IAM before deploys
+
+If deploy commands fail with a `403` mentioning `serviceusage.services.use`, the Firebase CLI is working but your Google account does not have enough IAM permissions on the new project.
+
+For project `rvm-attend`, open:
+
+[https://console.developers.google.com/iam-admin/iam?project=rvm-attend](https://console.developers.google.com/iam-admin/iam?project=rvm-attend)
+
+Add your deploy account, for example `siddarthgadge4209@gmail.com`, with one of these role sets:
+
+- Recommended for a solo production owner: `Owner`
+- Recommended for a team member doing production deploys: `Editor` plus Firebase access
+- Minimum role for the specific error: `Service Usage Consumer`
+
+For Firebase production deploys, the practical setup is usually:
+
+- `Firebase Admin`
+- `Editor` or `Owner`
+- `Service Usage Consumer`
+
+After changing IAM, wait 2 to 10 minutes and retry the deploy.
+
 ## 4. Check the app-side Firebase usage
 
 This app uses native Firebase initialization through `@react-native-firebase`, not manual JS config objects.

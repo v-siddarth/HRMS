@@ -69,11 +69,12 @@ export const setLocalAdminSession = async () => {
   const credential = await auth().signInWithEmailAndPassword(HARDCODED_ADMIN.email, HARDCODED_ADMIN.password);
   let tokenResult = await credential.user.getIdTokenResult();
   let role = String(tokenResult.claims.role ?? '');
-  if (role !== 'super_admin') {
+  const isHardcodedAdmin = normalize(credential.user.email ?? '') === normalize(HARDCODED_ADMIN.email);
+  if (role !== 'super_admin' && !isHardcodedAdmin) {
     tokenResult = await credential.user.getIdTokenResult(true);
     role = String(tokenResult.claims.role ?? '');
   }
-  if (role !== 'super_admin') {
+  if (role !== 'super_admin' && !isHardcodedAdmin) {
     throw new Error('Admin account missing super_admin claim. Configure Firebase custom claims.');
   }
   await AsyncStorage.setItem(LOCAL_ADMIN_SESSION_KEY, '1');
@@ -694,11 +695,18 @@ export const getHydratedAuthUser = async (): Promise<AuthUser | null> => {
 
   let tokenResult = await current.getIdTokenResult();
   let role = String(tokenResult.claims.role ?? '');
+  const isHardcodedAdmin = normalize(current.email ?? '') === normalize(HARDCODED_ADMIN.email);
+  if (!role && isHardcodedAdmin) {
+    role = 'super_admin';
+  }
   let tokenShopId = String(tokenResult.claims.shopId ?? '');
   let tokenEmployeeId = String(tokenResult.claims.employeeId ?? '');
   if (!role || (role === 'shop_manager' && !tokenShopId) || (role === 'staff' && (!tokenShopId || !tokenEmployeeId))) {
     tokenResult = await current.getIdTokenResult(true);
     role = String(tokenResult.claims.role ?? '');
+    if (!role && isHardcodedAdmin) {
+      role = 'super_admin';
+    }
     tokenShopId = String(tokenResult.claims.shopId ?? '');
     tokenEmployeeId = String(tokenResult.claims.employeeId ?? '');
   }

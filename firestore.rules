@@ -86,6 +86,13 @@ service cloud.firestore {
         && request.resource.data.employeeId == request.auth.token.employeeId;
     }
 
+    function canAccessShop(shopId) {
+      return isAdmin()
+        || isShopManager(shopId)
+        || isShopOwner(shopId)
+        || isStaff(shopId);
+    }
+
     function isOwnWeeklyShiftPlan(shopId) {
       return isStaff(shopId)
         && resource != null
@@ -108,12 +115,7 @@ service cloud.firestore {
     }
 
     match /shops/{shopId} {
-      allow read: if isAdmin()
-        || isShopManager(shopId)
-        || isStaff(shopId)
-        || isShopOwnerDoc()
-        || isShopOwner(shopId)
-        || signedIn();
+      allow read: if canAccessShop(shopId) || isShopOwnerDoc();
       allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
 
       match /managers/{uid} {
@@ -125,17 +127,26 @@ service cloud.firestore {
           || isShopManager(shopId)
           || isShopOwner(shopId)
           || isOwnEmployeeByAuthUid()
-          || (isStaff(shopId) && isOwnEmployee(employeeId))
-          || signedIn();
+          || (isStaff(shopId) && isOwnEmployee(employeeId));
         allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /attendance/{attendanceId} {
-        allow read: if signedIn();
+        allow read: if isAdmin()
+          || isShopManager(shopId)
+          || isShopOwner(shopId)
+          || isOwnAttendanceResource(shopId)
+          || (isStaff(shopId) && isOwnAttendanceByDocId(attendanceId));
 
-        allow create: if signedIn();
+        allow create: if isAdmin()
+          || isShopManager(shopId)
+          || isShopOwner(shopId)
+          || isOwnAttendanceCreate(shopId);
 
-        allow update: if signedIn();
+        allow update: if isAdmin()
+          || isShopManager(shopId)
+          || isShopOwner(shopId)
+          || isOwnAttendanceUpdate(shopId);
 
         allow delete: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
@@ -159,17 +170,17 @@ service cloud.firestore {
       }
 
       match /shifts/{shiftId} {
-        allow read: if signedIn();
+        allow read: if canAccessShop(shopId);
         allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /holidays/{holidayId} {
-        allow read: if signedIn();
+        allow read: if canAccessShop(shopId);
         allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
       match /leaves/{leaveId} {
-        allow read: if signedIn();
+        allow read: if canAccessShop(shopId);
         allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
 
@@ -190,7 +201,7 @@ service cloud.firestore {
       }
 
       match /settings/{settingId} {
-        allow read: if signedIn();
+        allow read: if canAccessShop(shopId);
         allow write: if isAdmin() || isShopManager(shopId) || isShopOwner(shopId);
       }
     }
